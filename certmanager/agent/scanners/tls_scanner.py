@@ -21,10 +21,25 @@ from certmanager.agent.scanners.base import HealthStatus, ScannerPlugin, ScanRes
 
 logger = structlog.get_logger()
 
-# Disable certificate verification — we're just collecting metadata
-_INSECURE_SSL_CONTEXT = ssl.create_default_context()
-_INSECURE_SSL_CONTEXT.check_hostname = False
-_INSECURE_SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+# Disable certificate verification — we're just collecting metadata. Also
+# relax TLS to the widest practical envelope: embedded devices (printers,
+# cameras, IoT) frequently speak old TLS versions and ciphers that modern
+# OpenSSL security levels refuse to offer (e.g. an HP printer that only
+# negotiates AES256-SHA). Without @SECLEVEL=0 those endpoints silently
+# fail the handshake and never appear in discovery results.
+def _build_scan_ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.minimum_version = ssl.TLSVersion.TLSv1
+    try:
+        ctx.set_ciphers("ALL:@SECLEVEL=0")
+    except ssl.SSLError:
+        pass  # cipher string rejected — keep platform defaults
+    return ctx
+
+
+_INSECURE_SSL_CONTEXT = _build_scan_ssl_context()
 
 
 class TLSScanner(ScannerPlugin):
@@ -167,6 +182,9 @@ class TLSScanner(ScannerPlugin):
 
         for result in results:
             if isinstance(result, Exception):
+                # We reached a TLS-speaking endpoint whose handshake failed —
+                # count it as checked AND an error so it is visible in stats.
+                total_checked += 1
                 total_errors += 1
                 errors.append(str(result))
             elif result:
@@ -203,6 +221,11 @@ class TLSScanner(ScannerPlugin):
 
         Returns:
             Certificate dict if TLS is present, None otherwise.
+
+        Raises:
+            ssl.SSLError: the port speaks TLS but the handshake failed —
+                counted as a checked host with an error so discovery stats
+                don't silently report zero for networks full of broken TLS.
         """
         async with self._semaphore:
             try:
@@ -227,13 +250,15 @@ class TLSScanner(ScannerPlugin):
                 return self._parse_certificate(cert_bin, host, port)
 
             except (TimeoutError, ConnectionRefusedError, OSError):
+                # Nothing (or nothing reachable) on this host:port — not an error
                 return None
             except ssl.SSLError:
-                # TLS present but negotiation failed — still record the endpoint
-                return None
+                # TLS present but negotiation failed — surface it instead of
+                # silently dropping the endpoint from the scan stats
+                raise
             except Exception as e:
                 logger.debug("tls_scan_error", host=host, port=port, error=str(e))
-                return None
+                raise
 
     def _parse_certificate(self, cert_bin: bytes, host: str, port: int) -> dict:
         """Parse a DER-encoded X.509 certificate from a TLS handshake."""
@@ -307,7 +332,7 @@ class TLSScanner(ScannerPlugin):
         cert_type = "server"
         try:
             eku = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage)
-            purposes = {oid._name for oid in eku}
+            purposes = {oid._name for oid in eku.value}
             if "serverAuth" in purposes:
                 cert_type = "server"
             elif "clientAuth" in purposes:
