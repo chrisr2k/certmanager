@@ -68,20 +68,17 @@ def configure_logging() -> None:
     is_json = settings.log_format == "json"
     is_production = settings.environment == "production"
 
-    # Shared processors
-    shared_processors: list[structlog.typing.Processor] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
-        _redact_processor,
-        structlog.dev.ConsoleRenderer() if not is_json else structlog.processors.JSONRenderer(),
-    ]
-
-    # Configure structlog
+    # The RENDERER lives only in the ProcessorFormatter below. The structlog
+    # pipeline itself ends with wrap_for_formatter, which wraps the unrendered
+    # EVENT DICT into the stdlib record — rendering a string here would make
+    # the formatter receive a str instead of a dict and crash.
     structlog.configure(
         processors=[
             structlog.stdlib.filter_by_level,
-            *shared_processors,
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            _redact_processor,
             structlog.stdlib.PositionalArgumentsFormatter(),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
@@ -96,6 +93,12 @@ def configure_logging() -> None:
     # Configure stdlib logging to route through structlog
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
+    renderer = (
+        structlog.dev.ConsoleRenderer()
+        if not is_json
+        else structlog.processors.JSONRenderer()
+    )
+
     formatter = structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
             structlog.stdlib.add_log_level,
@@ -105,7 +108,7 @@ def configure_logging() -> None:
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             _redact_processor,
-            structlog.dev.ConsoleRenderer() if not is_json else structlog.processors.JSONRenderer(),
+            renderer,
         ],
     )
 

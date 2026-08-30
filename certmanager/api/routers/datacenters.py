@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +12,24 @@ from certmanager.core.exceptions import ConflictError, NotFoundError
 from certmanager.core.models import Datacenter, User
 
 router = APIRouter()
+
+
+class DatacenterCreate(BaseModel):
+    """Body for registering a datacenter."""
+
+    name: str
+    code: str
+    location: str | None = None
+    timezone: str = "UTC"
+
+
+class DatacenterUpdate(BaseModel):
+    """Body for updating a datacenter — all fields optional."""
+
+    name: str | None = None
+    location: str | None = None
+    timezone: str | None = None
+    is_active: bool | None = None
 
 
 @router.get("")
@@ -48,21 +67,22 @@ async def list_datacenters(
 
 @router.post("", status_code=201)
 async def create_datacenter(
-    name: str,
-    code: str,
-    location: str | None = None,
-    timezone: str = "UTC",
+    body: DatacenterCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Register a new datacenter."""
     existing = await db.execute(
-        select(Datacenter).where((Datacenter.name == name) | (Datacenter.code == code))
+        select(Datacenter).where(
+            (Datacenter.name == body.name) | (Datacenter.code == body.code)
+        )
     )
     if existing.scalar_one_or_none():
-        raise ConflictError(f"Datacenter '{name}' or code '{code}' already exists")
+        raise ConflictError(f"Datacenter '{body.name}' or code '{body.code}' already exists")
 
-    dc = Datacenter(name=name, code=code, location=location, timezone=timezone)
+    dc = Datacenter(
+        name=body.name, code=body.code, location=body.location, timezone=body.timezone
+    )
     db.add(dc)
     await db.flush()
     await db.refresh(dc)
@@ -109,10 +129,7 @@ async def get_datacenter(
 @router.patch("/{dc_id}")
 async def update_datacenter(
     dc_id: str,
-    name: str | None = None,
-    location: str | None = None,
-    timezone: str | None = None,
-    is_active: bool | None = None,
+    body: DatacenterUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -122,14 +139,10 @@ async def update_datacenter(
     if not dc:
         raise NotFoundError(f"Datacenter {dc_id} not found")
 
-    if name is not None:
-        dc.name = name
-    if location is not None:
-        dc.location = location
-    if timezone is not None:
-        dc.timezone = timezone
-    if is_active is not None:
-        dc.is_active = is_active
+    for field in ("name", "location", "timezone", "is_active"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(dc, field, value)
 
     await db.flush()
     return {"data": {"id": dc.id, "updated": True}}

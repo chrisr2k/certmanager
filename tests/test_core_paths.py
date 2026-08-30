@@ -192,3 +192,18 @@ class TestConfigEnvelope:
         resp = await client.get("/api/health")
         assert resp.status_code == 200
         assert resp.json()["status"] in ("healthy", "degraded")
+
+
+class TestDatacenterContract:
+    async def test_create_datacenter_with_body(self, client: AsyncClient, admin_headers: dict):
+        resp = await client.post(
+            "/api/v1/datacenters",
+            headers=admin_headers,
+            json={"name": "Body DC", "code": "bdc1", "location": "Berlin"},
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["data"]["code"] == "bdc1"
+
+        listing = await client.get("/api/v1/datacenters", headers=admin_headers)
+        codes = [dc["code"] for dc in listing.json()["data"]]
+        assert "bdc1" in codes
