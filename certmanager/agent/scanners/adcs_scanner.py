@@ -61,12 +61,28 @@ class ADCSLocalScanner(ScannerPlugin):
         self.use_winrm = use_winrm
         self.winrm_endpoint = winrm_endpoint
 
+    @staticmethod
+    def _ps_escape(value: str) -> str:
+        """Escape a value for single-quoted PowerShell string interpolation.
+
+        Prevents PowerShell code injection when CA names / template names /
+        dates originating from job scope config are interpolated into scripts.
+        """
+        return str(value).replace("'", "''")
+
+    @staticmethod
+    def _powershell_binary() -> str:
+        """Return the PowerShell executable for this platform."""
+        import sys
+
+        return "powershell" if sys.platform == "win32" else "pwsh"
+
     async def health_check(self) -> HealthStatus:
         """Verify PowerShell and AD CS connectivity."""
         try:
             # Check if PowerShell is available
             proc = await asyncio.create_subprocess_exec(
-                "powershell",
+                self._powershell_binary(),
                 "-NoProfile",
                 "-Command",
                 "Write-Output 'ok'",
@@ -85,9 +101,12 @@ class ADCSLocalScanner(ScannerPlugin):
                 )
 
             # Try to access the CA
-            ps_cmd = f"Get-CertificationAuthority -Name '{self.ca_name}' 2>$null | Select-Object -ExpandProperty DisplayName"
+            ps_cmd = (
+                f"Get-CertificationAuthority -Name '{self._ps_escape(self.ca_name)}' "
+                "2>$null | Select-Object -ExpandProperty DisplayName"
+            )
             proc = await asyncio.create_subprocess_exec(
-                "powershell",
+                self._powershell_binary(),
                 "-NoProfile",
                 "-Command",
                 ps_cmd,
@@ -221,7 +240,7 @@ class ADCSLocalScanner(ScannerPlugin):
 
         # Query issued certs
         if self.ca_name:
-            ca_filter = f"-Name '{self.ca_name}'"
+            ca_filter = f"-Name '{self._ps_escape(self.ca_name)}'"
         else:
             ca_filter = ""
 
@@ -231,12 +250,12 @@ class ADCSLocalScanner(ScannerPlugin):
         # Get issued certificates
         template_filter = ""
         if templates:
-            template_list = ", ".join(f"'{t}'" for t in templates)
+            template_list = ", ".join(f"'{self._ps_escape(t)}'" for t in templates)
             template_filter = f" | Where-Object {{ $_.CertificateTemplate -in @({template_list}) }}"
 
         date_filter = ""
         if since:
-            date_filter = f" | Where-Object {{ $_.NotBefore -ge [datetime]'{since}' }}"
+            date_filter = f" | Where-Object {{ $_.NotBefore -ge [datetime]'{self._ps_escape(since)}' }}"
 
         ps_lines.append(
             f"  $certs = Get-IssuedRequest -CertificationAuthority $ca "

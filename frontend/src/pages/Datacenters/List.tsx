@@ -12,7 +12,7 @@ import {
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import apiClient from '../../api/client';
+import { getEnveloped } from '../../api/client';
 import TopologyGraph from '../../components/charts/TopologyGraph';
 
 const { Title, Text } = Typography;
@@ -25,8 +25,7 @@ export default function DatacentersList() {
   const { data: topology, isLoading } = useQuery({
     queryKey: ['topology-full'],
     queryFn: async () => {
-      const { data } = await apiClient.get('/dashboard/topology');
-      return data;
+      return getEnveloped('/dashboard/topology');
     },
     refetchInterval: 30_000,
   });

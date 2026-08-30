@@ -1,0 +1,11 @@
+# Production environment overrides.
+# CERTMGMT_CORS__ORIGINS must be a JSON-encoded list.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: certmanager-config
+  namespace: certmanager
+data:
+  CERTMGMT_ENVIRONMENT: "production"
+  CERTMGMT_LOG_FORMAT: "json"
+  CERTMGMT_CORS__ORIGINS: '["https://certmanager.example.com"]'

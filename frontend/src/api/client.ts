@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -15,6 +16,30 @@ apiClient.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Endpoints where a 401 means the request itself failed (bad credentials, MFA
+// challenge, invalid refresh token) — NOT an expired access token. These must
+// reject immediately so the caller can handle the error instead of being
+// redirected through the refresh flow.
+const NO_REFRESH_URLS = ['/auth/login', '/auth/refresh'];
+
+// Registered by the auth store so a session expiry resets React state (not
+// just localStorage). Falls back to a hard redirect if none is registered.
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
+function clearSession() {
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+  if (unauthorizedHandler) {
+    unauthorizedHandler();
+  } else {
+    window.location.href = '/login';
+  }
+}
 
 // Response interceptor — handle 401 token refresh
 let isRefreshing = false;
@@ -37,6 +62,11 @@ apiClient.interceptors.response.use(
     const originalRequest = error.config;
 
     if (error.response?.status === 401 && !originalRequest._retry) {
+      const url: string = originalRequest?.url || '';
+      if (NO_REFRESH_URLS.some((endpoint) => url.includes(endpoint))) {
+        return Promise.reject(error);
+      }
+
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
@@ -51,8 +81,7 @@ apiClient.interceptors.response.use(
 
       const refreshToken = localStorage.getItem('refresh_token');
       if (!refreshToken) {
-        localStorage.clear();
-        window.location.href = '/login';
+        clearSession();
         return Promise.reject(error);
       }
 
@@ -69,8 +98,7 @@ apiClient.interceptors.response.use(
         return apiClient(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError, null);
-        localStorage.clear();
-        window.location.href = '/login';
+        clearSession();
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
@@ -80,5 +108,11 @@ apiClient.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/** GET a resource, unwrapping the backend's `{"data": ...}` response envelope. */
+export async function getEnveloped<T = any>(url: string, config?: AxiosRequestConfig): Promise<T> {
+  const { data } = await apiClient.get(url, config);
+  return data?.data ?? data;
+}
 
 export default apiClient;

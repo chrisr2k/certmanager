@@ -1,0 +1,24 @@
+# Production replica counts (HPA floors/ceilings are set in base/hpa.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: certmanager
+spec:
+  replicas: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: certmanager
+spec:
+  replicas: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: certmanager
+spec:
+  replicas: 2

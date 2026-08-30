@@ -32,13 +32,10 @@ class AgentSettings(BaseSettings):
     datacenter_code: str = Field(default="", description="Datacenter code this agent belongs to")
 
     # Registration
-    agent_token: Optional[str] = Field(default=None, description="Agent API token (set after registration)")
-    agent_id: Optional[str] = Field(default=None, description="Agent UUID (set after registration)")
-    api_token: Optional[str] = Field(default=None, description="JWT API token (set after registration)")
+    agent_id: Optional[str] = Field(default=None, description="Agent UUID (set after registration, informational)")
 
     # Polling
     poll_interval: int = Field(default=30, description="Seconds between job poll cycles")
-    heartbeat_interval: int = Field(default=30, description="Seconds between heartbeats")
 
     # Local storage
     local_db_path: str = Field(default="agent_data/agent.db", description="SQLite database path")
@@ -48,6 +45,15 @@ class AgentSettings(BaseSettings):
     tls_cidr_ranges: list[str] = Field(default_factory=list, description="CIDR ranges for TLS scanning")
     tls_ports: list[int] = Field(default_factory=lambda: [443, 8443, 636, 993, 995], description="Ports to scan for TLS")
     tls_timeout: float = Field(default=5.0, description="TLS handshake timeout in seconds")
+    tls_max_hosts_per_cidr: int = Field(default=256, description="Max hosts scanned per CIDR (safety cap)")
+
+    # Connector listener (the central AD CS connector calls the agent here)
+    listener_enabled: bool = Field(default=True, description="Serve the connector HTTP listener")
+    listener_host: str = Field(default="0.0.0.0", description="Listener bind address")
+    listener_port: int = Field(default=8443, description="Listener port")
+    listener_ssl_cert: Optional[str] = Field(default=None, description="Path to listener TLS cert PEM")
+    listener_ssl_key: Optional[str] = Field(default=None, description="Path to listener TLS key PEM")
+    listener_ssl_ca: Optional[str] = Field(default=None, description="Path to client CA PEM (requires client certs when set)")
 
     # AD CS scanner settings (if agent_type=adcs)
     adcs_ca_server: str = Field(default="", description="AD CS server hostname")
@@ -86,17 +92,21 @@ def load_agent_config(config_path: Optional[str] = None) -> AgentSettings:
             "agent_name": "agent_name",
             "agent_type": "agent_type",
             "datacenter_code": "datacenter_code",
-            "agent_token": "agent_token",
             "agent_id": "agent_id",
-            "api_token": "api_token",
             "poll_interval": "poll_interval",
-            "heartbeat_interval": "heartbeat_interval",
             "local_db_path": "local_db_path",
             "tls_cidr_ranges": "tls_cidr_ranges",
             "tls_ports": "tls_ports",
             "tls_timeout": "tls_timeout",
+            "tls_max_hosts_per_cidr": "tls_max_hosts_per_cidr",
             "adcs_ca_server": "adcs_ca_server",
             "adcs_ca_name": "adcs_ca_name",
+            "listener_enabled": "listener_enabled",
+            "listener_host": "listener_host",
+            "listener_port": "listener_port",
+            "listener_ssl_cert": "listener_ssl_cert",
+            "listener_ssl_key": "listener_ssl_key",
+            "listener_ssl_ca": "listener_ssl_ca",
             "log_level": "log_level",
         }
 
@@ -118,7 +128,10 @@ def load_agent_config(config_path: Optional[str] = None) -> AgentSettings:
 def save_agent_config(settings: AgentSettings, config_path: Optional[str] = None) -> None:
     """Persist agent settings to the JSON config file.
 
-    Only saves persistent fields (not runtime-only like tokens that change).
+    Only saves persistent fields — NEVER runtime tokens (JWT/agent tokens
+    stay in memory only; the agent re-registers with its PSK on restart).
+    The PSK itself is the bootstrap secret and must be protected with file
+    permissions (the install scripts set restrictive ACLs).
     """
     import json
 
@@ -130,17 +143,21 @@ def save_agent_config(settings: AgentSettings, config_path: Optional[str] = None
         "agent_name": settings.agent_name,
         "agent_type": settings.agent_type,
         "datacenter_code": settings.datacenter_code,
-        "agent_token": settings.agent_token,
         "agent_id": settings.agent_id,
-        "api_token": settings.api_token,
         "poll_interval": settings.poll_interval,
-        "heartbeat_interval": settings.heartbeat_interval,
         "local_db_path": settings.local_db_path,
         "tls_cidr_ranges": settings.tls_cidr_ranges,
         "tls_ports": settings.tls_ports,
         "tls_timeout": settings.tls_timeout,
+        "tls_max_hosts_per_cidr": settings.tls_max_hosts_per_cidr,
         "adcs_ca_server": settings.adcs_ca_server,
         "adcs_ca_name": settings.adcs_ca_name,
+        "listener_enabled": settings.listener_enabled,
+        "listener_host": settings.listener_host,
+        "listener_port": settings.listener_port,
+        "listener_ssl_cert": settings.listener_ssl_cert,
+        "listener_ssl_key": settings.listener_ssl_key,
+        "listener_ssl_ca": settings.listener_ssl_ca,
         "log_level": settings.log_level,
     }
 

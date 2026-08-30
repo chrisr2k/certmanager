@@ -1,0 +1,13 @@
+# Terraform local state and plugin cache
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+
+# Local variable files (contain secrets: db_password, secret_key, ...)
+terraform.tfvars
+*.auto.tfvars
+
+# Agent runtime data
+agent_data/
+*.log

@@ -1,11 +1,15 @@
 """Agent HTTP client for communicating with the central CertManager API.
 
 Handles:
-- Registration (PSK-based handshake)
+- Registration (PSK-based handshake, idempotent re-registration)
 - Heartbeat (periodic health pulse)
 - Job polling (fetch pending scan jobs)
 - Result submission (POST scan results)
-- Air-gap export/import (signed JSON files)
+- Air-gap export/import (HMAC-signed JSON files)
+
+Auth model: registration returns a long-lived agent JWT (30 days). When a
+request fails with 401/403 (e.g. token expired or agent revoked server-side),
+the client clears its token and re-registers with the PSK once, then retries.
 """
 
 from __future__ import annotations
@@ -20,15 +24,22 @@ import structlog
 logger = structlog.get_logger()
 
 
+class AgentAuthError(Exception):
+    """The central API rejected the agent's credentials (401/403)."""
+
+
 class AgentAPIClient:
     """HTTP client for the central CertManager API from the agent's perspective."""
 
-    def __init__(self, api_url: str, agent_name: str, psk: str):
+    def __init__(self, api_url: str, agent_name: str, psk: str, agent_type: str = "", datacenter_code: str = ""):
         self.api_url = api_url.rstrip("/")
         self.agent_name = agent_name
         self.psk = psk
+        self.agent_type = agent_type
+        self.datacenter_code = datacenter_code
         self.agent_id: Optional[str] = None
         self.api_token: Optional[str] = None
+        self.agent_token: Optional[str] = None  # permanent token (connector listener)
         self._session = None
 
     async def _get_session(self):
@@ -45,26 +56,37 @@ class AgentAPIClient:
             )
         return self._session
 
-    async def _request(self, method: str, path: str, json_data: dict = None) -> dict:
-        """Make an HTTP request to the central API."""
+    async def _request(self, method: str, path: str, json_data: dict = None, auth: bool = True) -> dict:
+        """Make an HTTP request to the central API.
+
+        Raises:
+            AgentAuthError: on 401/403 — the caller should re-register.
+            aiohttp.ClientError: on transport-level failures (offline).
+        """
         import aiohttp
 
         session = await self._get_session()
         url = f"{self.api_url}/api/v1{path}"
         headers = {}
 
-        if self.api_token:
+        if auth and self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
 
         try:
             if method == "GET":
                 async with session.get(url, headers=headers) as resp:
+                    if resp.status in (401, 403):
+                        raise AgentAuthError(f"Auth rejected ({resp.status}) on {path}")
                     resp.raise_for_status()
                     return await resp.json()
             elif method == "POST":
                 async with session.post(url, headers=headers, json=json_data) as resp:
+                    if resp.status in (401, 403):
+                        raise AgentAuthError(f"Auth rejected ({resp.status}) on {path}")
                     resp.raise_for_status()
                     return await resp.json()
+        except AgentAuthError:
+            raise
         except aiohttp.ClientResponseError as e:
             logger.error("api_error", url=url, status=e.status, message=str(e))
             raise
@@ -72,10 +94,13 @@ class AgentAPIClient:
             logger.error("api_connection_error", url=url, error=str(e))
             raise
 
-    async def register(self, agent_type: str, datacenter_code: str, hostname: str = "") -> bool:
+    async def register(self, hostname: str = "") -> bool:
         """Register this agent with the central API using the PSK.
 
-        On success, stores agent_id and api_token.
+        Idempotent: re-registering an existing agent returns a fresh JWT.
+
+        On success, stores agent_id, api_token and (first time only) the
+        permanent agent_token.
 
         Returns:
             True if registration was successful.
@@ -86,31 +111,46 @@ class AgentAPIClient:
                 "/agents/register",
                 json_data={
                     "name": self.agent_name,
-                    "agent_type": agent_type,
-                    "datacenter_code": datacenter_code,
+                    "agent_type": self.agent_type,
+                    "datacenter_code": self.datacenter_code,
                     "hostname": hostname or self.agent_name,
                     "psk": self.psk,
                 },
+                auth=False,
             )
 
             data = response.get("data", {})
-            self.agent_id = data.get("agent_id")
-            self.api_token = data.get("api_token")
-            # Also get the permanent agent token
-            agent_token = data.get("agent_token")
+            agent_id = data.get("agent_id")
+            api_token = data.get("api_token")
+            if not agent_id or not api_token:
+                logger.error("agent_registration_malformed_response", response_keys=list(data.keys()))
+                return False
+
+            self.agent_id = agent_id
+            self.api_token = api_token
+            # The permanent agent token is only returned on first registration
+            if data.get("agent_token"):
+                self.agent_token = data["agent_token"]
 
             logger.info(
                 "agent_registered",
                 agent_id=self.agent_id,
                 name=self.agent_name,
                 status=data.get("status"),
+                token_expires=data.get("api_token_expires_at"),
             )
-
             return True
 
         except Exception as e:
             logger.error("agent_registration_failed", error=str(e))
             return False
+
+    async def _reauthenticate(self) -> bool:
+        """Re-register after an auth failure and retry-ability signal."""
+        logger.warning("agent_auth_failure_reregistering", agent_id=self.agent_id)
+        self.agent_id = None
+        self.api_token = None
+        return await self.register()
 
     async def send_heartbeat(self) -> dict:
         """Send a heartbeat pulse to the central API.
@@ -126,6 +166,14 @@ class AgentAPIClient:
             response = await self._request("POST", f"/agents/{self.agent_id}/heartbeat")
             data = response.get("data", {})
             return data
+        except AgentAuthError:
+            if await self._reauthenticate():
+                try:
+                    response = await self._request("POST", f"/agents/{self.agent_id}/heartbeat")
+                    return response.get("data", {})
+                except Exception as e:
+                    logger.warning("heartbeat_failed_after_reauth", error=str(e))
+            return {"status": "offline", "pending_jobs": 0}
         except Exception as e:
             logger.warning("heartbeat_failed", error=str(e))
             return {"status": "offline", "pending_jobs": 0}
@@ -143,6 +191,15 @@ class AgentAPIClient:
             response = await self._request("GET", f"/agents/{self.agent_id}/jobs")
             data = response.get("data", {})
             return data.get("jobs", [])
+        except AgentAuthError:
+            if await self._reauthenticate():
+                try:
+                    response = await self._request("GET", f"/agents/{self.agent_id}/jobs")
+                    data = response.get("data", {})
+                    return data.get("jobs", [])
+                except Exception as e:
+                    logger.warning("fetch_jobs_failed_after_reauth", error=str(e))
+            return []
         except Exception as e:
             logger.warning("fetch_jobs_failed", error=str(e))
             return []
@@ -168,6 +225,19 @@ class AgentAPIClient:
             )
             logger.info("result_submitted", job_id=job_id)
             return True
+        except AgentAuthError:
+            if await self._reauthenticate():
+                try:
+                    await self._request(
+                        "POST",
+                        f"/agents/{self.agent_id}/jobs/{job_id}/result",
+                        json_data=result,
+                    )
+                    logger.info("result_submitted_after_reauth", job_id=job_id)
+                    return True
+                except Exception as e:
+                    logger.error("result_submit_failed_after_reauth", job_id=job_id, error=str(e))
+            return False
         except Exception as e:
             logger.error("result_submit_failed", job_id=job_id, error=str(e))
             return False
@@ -184,12 +254,13 @@ class AgentAPIClient:
         results: list[dict],
         output_path: str,
         agent_name: str,
-        secret: str = "",
+        secret: str,
     ) -> str:
         """Export buffered job results to a signed JSON file.
 
-        Used in air-gapped environments where the agent cannot reach
-        the central API. The file is signed with an HMAC for integrity.
+        Used in air-gapped environments where the agent cannot reach the
+        central API. The file is signed with an HMAC for integrity; the
+        secret is REQUIRED — unsigned exports would be forgeable.
 
         Args:
             results: List of result dicts to export.
@@ -203,6 +274,9 @@ class AgentAPIClient:
         import hashlib
         import hmac
 
+        if not secret:
+            raise ValueError("export_results requires a non-empty HMAC secret")
+
         payload = {
             "agent_name": agent_name,
             "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -212,12 +286,11 @@ class AgentAPIClient:
         payload_json = json.dumps(payload, indent=2, default=str)
 
         # Sign with HMAC-SHA256
-        if secret:
-            mac = hmac.new(
-                secret.encode(), payload_json.encode(), hashlib.sha256
-            ).hexdigest()
-            payload["hmac"] = mac
-            payload_json = json.dumps(payload, indent=2, default=str)
+        mac = hmac.new(
+            secret.encode(), payload_json.encode(), hashlib.sha256
+        ).hexdigest()
+        payload["hmac"] = mac
+        payload_json = json.dumps(payload, indent=2, default=str)
 
         Path(output_path).write_text(payload_json)
         logger.info("results_exported", path=output_path, count=len(results))
@@ -246,36 +319,47 @@ class AgentAPIClient:
         return data
 
     @staticmethod
-    def verify_export(export_path: str, secret: str = "") -> dict | None:
+    def verify_export(export_path: str, secret: str) -> dict | None:
         """Verify the integrity of an air-gap export file.
 
         Args:
             export_path: Path to the exported JSON file.
-            secret: Pre-shared key for HMAC verification.
+            secret: Pre-shared key for HMAC verification (REQUIRED).
 
         Returns:
-            Parsed payload if valid, None if tampered or invalid.
+            Parsed payload if valid, None if tampered, invalid, or unsigned.
         """
         import hashlib
         import hmac
 
+        if not secret:
+            logger.error("export_verification_refused", path=export_path, reason="no secret")
+            return None
+
         raw = Path(export_path).read_text()
-        data = json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.error("export_parse_failed", path=export_path)
+            return None
 
-        if secret and "hmac" in data:
-            expected_hmac = data.pop("hmac")
-            # Recompute without the hmac field
-            recomputed = json.dumps(data, indent=2, default=str)
-            actual_hmac = hmac.new(
-                secret.encode(), recomputed.encode(), hashlib.sha256
-            ).hexdigest()
+        if "hmac" not in data:
+            logger.error("export_unsigned", path=export_path)
+            return None
 
-            if not hmac.compare_digest(actual_hmac, expected_hmac):
-                logger.error("export_hmac_mismatch", path=export_path)
-                return None
+        expected_hmac = data.pop("hmac")
+        # Recompute without the hmac field
+        recomputed = json.dumps(data, indent=2, default=str)
+        actual_hmac = hmac.new(
+            secret.encode(), recomputed.encode(), hashlib.sha256
+        ).hexdigest()
 
-            # Put hmac back
-            data["hmac"] = expected_hmac
+        if not hmac.compare_digest(actual_hmac, expected_hmac):
+            logger.error("export_hmac_mismatch", path=export_path)
+            return None
+
+        # Put hmac back
+        data["hmac"] = expected_hmac
 
         logger.info("export_verified", path=export_path)
         return data

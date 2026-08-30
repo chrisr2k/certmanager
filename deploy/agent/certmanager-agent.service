@@ -8,8 +8,35 @@ Wants=network-online.target
 Type=simple
 User=certmgr
 Group=certmgr
+
+# ---------------------------------------------------------------------------
+# Installation prerequisites (must be done BEFORE enabling this unit):
+#
+#   sudo useradd --system --home /opt/certmanager-agent --shell /usr/sbin/nologin certmgr
+#   sudo python3 -m venv /opt/certmanager-agent/.venv
+#   sudo /opt/certmanager-agent/.venv/bin/pip install certmanager
+#   sudo /opt/certmanager-agent/.venv/bin/certmanager agent init \
+#       --url https://api.example.com --psk <psk> \
+#       --config-path /opt/certmanager-agent/agent_config.json
+#   sudo mkdir -p /opt/certmanager-agent/agent_data
+#   sudo chown -R certmgr:certmgr /opt/certmanager-agent
+#   sudo chmod 600 /opt/certmanager-agent/agent_config.json
+#   sudo cp deploy/agent/certmanager-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now certmanager-agent
+#
+# The ExecStart paths below are absolute and the venv is expected at
+# /opt/certmanager-agent/.venv. Adjust them if you installed elsewhere.
+# ---------------------------------------------------------------------------
+
+# Optional environment file for extra settings (ignored when missing).
+# Variables placed there must use the nested CERTMGMT_...__... form,
+# e.g. CERTMGMT_AGENT__PSK=secret
+EnvironmentFile=-/opt/certmanager-agent/agent.env
+
 WorkingDirectory=/opt/certmanager-agent
-ExecStart=/opt/certmanager-agent/.venv/bin/python -m certmanager.agent.agent
+ExecStart=/opt/certmanager-agent/.venv/bin/python -m certmanager.cli agent run \
+    --config /opt/certmanager-agent/agent_config.json \
+    --data-dir /opt/certmanager-agent/agent_data
 Restart=always
 RestartSec=10
 StandardOutput=journal

@@ -63,13 +63,32 @@ class ADCSConnector(CAConnector):
             ca_server: Hostname of the AD CS server.
             ca_name: Name of the Certificate Authority.
             base_url: Base URL of the agent REST API.
-            api_token: Agent authentication token.
+            api_token: Agent authentication token (the permanent agent_token).
         """
         self.agent_id = agent_id
         self.ca_server = ca_server
         self.ca_name = ca_name
         self.base_url = base_url.rstrip("/")
         self.api_token = api_token
+        self._session = None
+
+    async def _get_session(self):
+        """Lazy-create a shared aiohttp session for this connector."""
+        import aiohttp
+
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                headers={
+                    "Authorization": f"Bearer {self.api_token}",
+                    "Content-Type": "application/json",
+                }
+            )
+        return self._session
+
+    async def close(self) -> None:
+        """Close the underlying HTTP session (callers manage connector lifecycle)."""
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
 
     async def _agent_request(self, method: str, path: str, json_data: dict = None) -> dict:
         """Make an HTTP request to the datacenter agent API.
@@ -84,36 +103,59 @@ class ADCSConnector(CAConnector):
 
         Raises:
             ConnectorTimeoutError: If the agent doesn't respond.
-            ConnectorError: For other agent communication errors.
+            ConnectorError: For other agent communication errors (including
+                401 auth failures and 501 not-supported responses).
         """
         import aiohttp
 
         url = f"{self.base_url}{path}"
-        headers = {
-            "Authorization": f"Bearer {self.api_token}",
-            "Content-Type": "application/json",
-        }
+        session = await self._get_session()
 
         try:
-            async with aiohttp.ClientSession() as session:
-                if method == "GET":
-                    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                        resp.raise_for_status()
-                        return await resp.json()
-                elif method == "POST":
-                    async with session.post(url, headers=headers, json=json_data, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                        resp.raise_for_status()
-                        return await resp.json()
+            if method == "GET":
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    return await self._handle_response(resp)
+            elif method == "POST":
+                async with session.post(url, json=json_data, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    return await self._handle_response(resp)
+            raise ConnectorError(f"Unsupported HTTP method: {method}")
+        except ConnectorError:
+            raise
         except aiohttp.ClientError as e:
             if "timeout" in str(e).lower():
                 raise ConnectorTimeoutError(f"Agent {self.agent_id} timed out: {e}")
             raise ConnectorError(f"Agent {self.agent_id} request failed: {e}")
+
+    @staticmethod
+    async def _handle_response(resp) -> dict:
+        """Decode an agent response, mapping error statuses to ConnectorError."""
+        import aiohttp
+
+        try:
+            body = await resp.json()
+        except Exception:
+            body = None
+
+        if resp.status == 401:
+            raise ConnectorError(
+                "Agent rejected the connector token — check the agent_token in the CA config"
+            )
+        if resp.status == 501:
+            message = (body or {}).get("message", "not supported") if isinstance(body, dict) else "not supported"
+            raise ConnectorError(f"Operation not supported by this agent: {message}")
+        if resp.status >= 400:
+            message = (body or {}).get("message", resp.reason) if isinstance(body, dict) else resp.reason
+            raise ConnectorError(f"Agent returned HTTP {resp.status}: {message}")
+        if not isinstance(body, dict):
+            raise ConnectorError("Agent returned a non-JSON response")
+        return body
 
     async def health_check(self) -> CAHealthResult:
         """Check agent health and AD CS connectivity."""
         start = time.monotonic()
 
         try:
+            # The agent listener accepts both GET and POST on /health
             result = await self._agent_request("GET", "/health")
             latency_ms = (time.monotonic() - start) * 1000
 

@@ -43,6 +43,19 @@ frontend/.tsbuildinfo
 # Docker
 docker-compose.override.yml
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+
+# Local reports output
+reports/
+
+# Frontend lock artifacts from tsc
+*.tsbuildinfo
+
 # Agent local storage
 *.db
 *.db-journal

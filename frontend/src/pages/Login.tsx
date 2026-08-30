@@ -6,6 +6,9 @@ import { useAuth } from '../store/auth';
 
 const { Title, Text } = Typography;
 
+// Prefilled demo credentials are for local development only.
+const isDev = import.meta.env.DEV;
+
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
@@ -62,7 +65,7 @@ export default function LoginPage() {
           onFinish={handleSubmit}
           layout="vertical"
           size="large"
-          initialValues={{ email: 'admin@certmanager.local' }}
+          initialValues={isDev ? { email: 'admin@certmanager.local' } : undefined}
         >
           <Form.Item
             name="email"
@@ -103,10 +106,14 @@ export default function LoginPage() {
           </Form.Item>
         </Form>
 
-        <Divider />
-        <Text type="secondary" style={{ display: 'block', textAlign: 'center', fontSize: 12 }}>
-          Default: admin@certmanager.local / changeme123
-        </Text>
+        {isDev && (
+          <>
+            <Divider />
+            <Text type="secondary" style={{ display: 'block', textAlign: 'center', fontSize: 12 }}>
+              Default: admin@certmanager.local / changeme123
+            </Text>
+          </>
+        )}
       </Card>
     </div>
   );

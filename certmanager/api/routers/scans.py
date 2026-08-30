@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,16 @@ from certmanager.core.exceptions import NotFoundError
 from certmanager.core.models import ScanJob, User
 
 router = APIRouter()
+
+
+class ScanTriggerRequest(BaseModel):
+    """Body for triggering a scan job."""
+
+    job_type: str = "full_discovery"
+    scope_config: Optional[dict] = None
+    agent_id: Optional[str] = None
+    cidr_ranges: Optional[list[str]] = None
+    ports: Optional[list[int]] = None
 
 
 def _dispatch_scan(scan_job_id: str) -> None:
@@ -85,11 +96,7 @@ async def list_scans(
 
 @router.post("", status_code=201)
 async def trigger_scan(
-    job_type: str = "full_discovery",
-    scope_config: Optional[dict] = None,
-    agent_id: Optional[str] = None,
-    cidr_ranges: Optional[list[str]] = None,
-    ports: Optional[list[int]] = None,
+    body: ScanTriggerRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -99,28 +106,28 @@ async def trigger_scan(
     The agent will execute the scan on its next poll cycle.
     """
     job = ScanJob(
-        job_type=job_type,
+        job_type=body.job_type,
         status="pending",
         triggered_by="manual",
         triggered_by_user=current_user.id,
-        scope_config=scope_config or {},
+        scope_config=body.scope_config or {},
     )
 
     # For TLS scans: populate scope from parameters
-    if job_type == "tls_scan":
-        if not agent_id:
+    if body.job_type == "tls_scan":
+        if not body.agent_id:
             from certmanager.core.exceptions import ValidationError
             raise ValidationError("agent_id is required for tls_scan jobs")
 
         from certmanager.services.agent_service import AgentService
 
         agent_svc = AgentService(db)
-        targets = await agent_svc.get_scan_targets(agent_id)
+        targets = await agent_svc.get_scan_targets(body.agent_id)
 
         job.scope_config = {
-            "agent_id": agent_id,
-            "cidr_ranges": cidr_ranges or targets["cidr_ranges"],
-            "ports": ports or targets["ports"],
+            "agent_id": body.agent_id,
+            "cidr_ranges": body.cidr_ranges or targets["cidr_ranges"],
+            "ports": body.ports or targets["ports"],
         }
 
         # For TLS scans, the agent polls for its own jobs —
@@ -131,7 +138,7 @@ async def trigger_scan(
     await db.refresh(job)
 
     # Dispatch to background worker (for non-TLS scans)
-    if job_type != "tls_scan":
+    if body.job_type != "tls_scan":
         _dispatch_scan(str(job.id))
     else:
         # For TLS scans, the agent fetches its own jobs via polling
@@ -144,7 +151,7 @@ async def trigger_scan(
             "status": "pending",
             "message": (
                 "TLS scan queued. The agent will pick this up on its next poll cycle."
-                if job_type == "tls_scan"
+                if body.job_type == "tls_scan"
                 else "Scan job dispatched to worker. Monitor status at GET /scans/{id}."
             ),
         }

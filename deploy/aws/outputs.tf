@@ -40,7 +40,7 @@ output "ecr_worker_repo" {
 
 output "push_commands" {
   description = "Docker push commands for initial deploy"
-  value = <<-EOT
+  value       = <<-EOT
     # Build and push API image:
     docker build -f docker/Dockerfile.api -t certmanager-api .
     aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com
@@ -51,5 +51,16 @@ output "push_commands" {
     docker build -f docker/Dockerfile.worker -t certmanager-worker .
     docker tag certmanager-worker:latest ${aws_ecr_repository.worker.repository_url}:latest
     docker push ${aws_ecr_repository.worker.repository_url}:latest
+  EOT
+}
+
+output "run_migrations" {
+  description = "Command to run database migrations + seed after each deploy (one-shot Fargate task)"
+  value       = <<-EOT
+    aws ecs run-task \
+      --cluster ${aws_ecs_cluster.main.name} \
+      --task-definition ${aws_ecs_task_definition.migrate.family} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${join(",", [for s in aws_subnet.public : s.id])}],securityGroups=[${aws_security_group.ecs.id}],assignPublicIp=ENABLED}"
   EOT
 }

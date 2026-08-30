@@ -2,8 +2,13 @@ environment          = "staging"
 location             = "eastus2"
 resource_group_name  = "certmanager-staging"
 
+# Networking / DNS
+public_domain        = "certmanager.example.com"
+allowed_db_ips       = []
+
 # Database
-postgres_sku         = "B_Standard_B1ms"
+postgres_sku         = "GP_Standard_D2s_v3" # General Purpose; required if postgres_high_availability = true
+postgres_high_availability = false
 postgres_storage_gb  = 32
 db_password          = "change-me-strong-password"
 
@@ -12,8 +17,9 @@ redis_sku     = "Basic"
 redis_capacity = 1
 
 # Security — CHANGE THESE
-secret_key    = "change-me-64-character-random-string-for-jwt-signing"
-agent_psk     = "change-me-agent-pre-shared-key"
+secret_key      = "change-me-64-character-random-string-for-jwt-signing"
+agent_psk       = "change-me-agent-pre-shared-key"
+encryption_key  = "" # base64-encoded 32-byte AES-256 key; required in production
 
 # Compute
 api_replicas    = 2

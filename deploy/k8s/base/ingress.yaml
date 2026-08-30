@@ -1,0 +1,42 @@
+# Host-based routing for the nginx ingress controller:
+#   certmanager.example.com/     -> frontend (static UI)
+#   certmanager.example.com/api  -> api (REST API)
+# nginx matches the longest path prefix first, so /api wins over /.
+#
+# TLS: create the secret referenced below before applying (or set
+# cert-manager to issue it):
+#   kubectl -n certmanager create secret tls certmanager-tls \
+#     --cert=tls.crt --key=tls.key
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: certmanager
+  namespace: certmanager
+  labels:
+    app.kubernetes.io/name: certmanager
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - certmanager.example.com
+      secretName: certmanager-tls
+  rules:
+    - host: certmanager.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

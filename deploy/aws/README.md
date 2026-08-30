@@ -51,21 +51,32 @@ tofu output push_commands
 
 Run the output push commands to build and upload your Docker images.
 
-## Post-deploy
+### HTTPS
+
+Set `certificate_arn` to an ACM certificate ARN for `domain_name` to enable
+the HTTPS listener and HTTP-to-HTTPS redirect. When left empty the ALB only
+listens on port 80 and forwards directly to the API (useful for staging
+behind a CDN or a VPN).
+
+## Post-deploy — database migrations
+
+A dedicated one-shot Fargate task definition (`certmanager-migrate-...`) runs
+`python -m certmanager.cli migrate && python -m certmanager.cli seed` against
+the same environment. Run it after every image deploy that ships schema
+changes:
 
 ```bash
-# Run database migrations
-TASK_ARN=$(aws ecs list-tasks \
+tofu output run_migrations
+# or equivalently:
+aws ecs run-task \
   --cluster certmanager-production \
-  --service certmanager-api-production \
-  --query 'taskArns[0]' --output text)
-
-aws ecs execute-command \
-  --cluster certmanager-production \
-  --task $TASK_ARN \
-  --container api \
-  --command "python -m alembic -c alembic/alembic.ini upgrade head && python -m certmanager.cli seed"
+  --task-definition certmanager-migrate-production \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-xxx,subnet-yyy],securityGroups=[sg-zzz],assignPublicIp=ENABLED}"
 ```
+
+Check the task's logs in the `/ecs/certmanager-migrate-<environment>` log
+group. The task exits 0 on success and keeps the log group history.
 
 ## Variables
 
@@ -77,8 +88,12 @@ aws ecs execute-command \
 | `db_password` | (required) | Database password |
 | `secret_key` | (required) | JWT signing key (64 chars) |
 | `agent_psk` | (generated) | Agent pre-shared key |
-| `domain_name` | `certmanager.example.com` | Public domain |
-| `certificate_arn` | `""` | ACM cert ARN for HTTPS |
+| `encryption_key` | (generated) | Base64 32-byte AES key for credential encryption; auto-generated in Secrets Manager when empty |
+| `domain_name` | `certmanager.example.com` | Public domain (CORS origins) |
+| `certificate_arn` | `""` | ACM cert ARN for HTTPS; listener is skipped when empty |
+
+The ECS tasks assume an IAM task role with `sts:AssumeRole` and `acm:*`
+permissions so the AWS ACM connector can issue certificates.
 
 ## Cost
 

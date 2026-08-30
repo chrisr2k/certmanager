@@ -22,12 +22,8 @@ terraform {
 
 provider "azurerm" {
   features {}
-
-  default_tags = {
-    Project     = "certmanager"
-    Environment = var.environment
-    ManagedBy   = "opentofu"
-  }
+  # Note: the azurerm provider has no provider-level default_tags (that is an
+  # AWS feature). Add `tags = { ... }` to individual resources as needed.
 }
 
 data "azurerm_client_config" "current" {}

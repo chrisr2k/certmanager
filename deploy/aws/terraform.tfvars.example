@@ -1,7 +1,7 @@
 environment      = "staging"
 aws_region        = "us-east-1"
 domain_name       = "certmanager.example.com"
-certificate_arn   = ""
+certificate_arn   = "" # ACM certificate ARN; HTTPS listener is created only when set
 
 # Database
 db_instance_class    = "db.t4g.medium"
@@ -14,7 +14,7 @@ redis_node_type = "cache.t4g.micro"
 # Security — CHANGE THESE
 secret_key      = "change-me-64-character-random-string-for-jwt-signing"
 agent_psk       = "change-me-agent-pre-shared-key"
-encryption_key  = ""
+encryption_key  = "" # base64-encoded 32-byte AES-256 key; leave empty to auto-generate in Secrets Manager
 
 # Compute
 api_replicas    = 2

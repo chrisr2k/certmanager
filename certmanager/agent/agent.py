@@ -70,48 +70,58 @@ class CertManagerAgent:
             api_url=self.settings.api_url,
             agent_name=self.settings.agent_name,
             psk=self.settings.psk,
+            agent_type=self.settings.agent_type,
+            datacenter_code=self.settings.datacenter_code,
         )
 
-        # Restore persistent state
-        saved_id = self._local_db.get_state("agent_id")
-        saved_token = self._local_db.get_state("api_token")
-        if saved_id:
-            self._api_client.agent_id = saved_id
-        if saved_token:
-            self._api_client.api_token = saved_token
+        # Register (always — idempotent server-side). Tokens are deliberately
+        # NOT persisted: on every start the agent re-registers with its PSK
+        # and receives a fresh long-lived JWT, so no JWTs ever sit on disk.
+        logger.info("agent_registering", name=self.settings.agent_name)
+        success = await self._api_client.register(hostname=self.settings.agent_name)
 
-        # Register if not already registered
-        if not self._api_client.agent_id or not self._api_client.api_token:
-            logger.info("agent_not_registered", name=self.settings.agent_name)
-            success = await self._api_client.register(
-                agent_type=self.settings.agent_type,
-                datacenter_code=self.settings.datacenter_code,
-                hostname=self.settings.agent_name,
-            )
+        if not success:
+            logger.error("registration_failed")
+            return False
 
-            if not success:
-                logger.error("registration_failed")
-                return False
+        # Persist only the identity and the permanent agent token. The
+        # agent_token IS the durable credential for the connector listener
+        # and is only returned on first registration, so it must survive
+        # restarts (the agent_data dir is ACL-restricted by the installers).
+        self._local_db.set_state("agent_id", self._api_client.agent_id)
+        if self._api_client.agent_token:
+            self._local_db.set_state("agent_token", self._api_client.agent_token)
+        elif not self._api_client.agent_token:
+            saved_agent_token = self._local_db.get_state("agent_token")
+            if saved_agent_token:
+                self._api_client.agent_token = saved_agent_token
 
-            # Persist tokens
-            self._local_db.set_state("agent_id", self._api_client.agent_id)
-            self._local_db.set_state("api_token", self._api_client.api_token)
+        # Save to config file for CLI usage (tokens are not persisted)
+        from certmanager.agent.config import save_agent_config
 
-            # Save to config file for CLI usage
-            from certmanager.agent.config import save_agent_config
+        self.settings.agent_id = self._api_client.agent_id
+        save_agent_config(self.settings)
 
-            self.settings.agent_id = self._api_client.agent_id
-            self.settings.api_token = self._api_client.api_token
-            save_agent_config(self.settings)
-
-            logger.info(
-                "agent_registered_and_persisted",
-                agent_id=self._api_client.agent_id,
-                name=self.settings.agent_name,
-            )
+        logger.info(
+            "agent_registered",
+            agent_id=self._api_client.agent_id,
+            name=self.settings.agent_name,
+        )
 
         # Load scanner plugins
         self._load_scanners()
+
+        # Start the connector listener (AD CS connector talks to this)
+        self._listener = None
+        if self.settings.listener_enabled:
+            from certmanager.agent.listener import AgentListener
+
+            self._listener = AgentListener(
+                settings=self.settings,
+                scanners=self._scanners,
+                agent_token=self._api_client.agent_token or "",
+            )
+            await self._listener.start()
 
         logger.info(
             "agent_initialized",
@@ -119,6 +129,7 @@ class CertManagerAgent:
             agent_id=self._api_client.agent_id,
             agent_type=self.settings.agent_type,
             scanners=[s.name for s in self._scanners],
+            listener_enabled=self.settings.listener_enabled,
         )
 
         return True
@@ -142,6 +153,7 @@ class CertManagerAgent:
                     cidr_ranges=self.settings.tls_cidr_ranges,
                     ports=self.settings.tls_ports,
                     timeout=self.settings.tls_timeout,
+                    max_hosts_per_cidr=self.settings.tls_max_hosts_per_cidr,
                 )
             )
 
@@ -220,6 +232,14 @@ class CertManagerAgent:
         else:
             logger.debug("heartbeat", status=result.get("status"))
 
+        # Local heartbeat buffer is telemetry-only: once the central API has
+        # been reached, clear the offline-period entries so it can't grow
+        # without bound (heartbeat history is queryable while offline).
+        if result.get("status") not in ("offline", "not_registered"):
+            history = self._local_db.get_heartbeat_history(since_hours=72)
+            if history:
+                self._local_db.clear_heartbeats()
+
     async def _flush_buffer(self) -> None:
         """Flush buffered results that were stored during offline periods."""
         pending = self._local_db.get_pending_results(limit=50)
@@ -240,10 +260,16 @@ class CertManagerAgent:
                     entry["row_id"], "Submission failed during flush"
                 )
 
-        # Purge hopeless entries
-        purged = self._local_db.purge_failed(max_retries=10)
+        # Purge entries only after a very large number of failed attempts —
+        # discovered certificate data is valuable and must not be dropped
+        # during routine outages. Operators can clean up manually if needed.
+        purged = self._local_db.purge_failed(max_retries=100)
         if purged:
-            logger.info("purged_failed_results", count=purged)
+            logger.warning(
+                "purged_failed_results",
+                count=purged,
+                message="Entries failed 100+ submissions and were dropped — investigate.",
+            )
 
     async def _execute_job(self, job: dict) -> None:
         """Execute a scan job using the appropriate scanner.
@@ -343,6 +369,9 @@ class CertManagerAgent:
     async def _cleanup(self) -> None:
         """Cleanup resources on shutdown."""
         logger.info("agent_stopping")
+
+        if self._listener is not None:
+            await self._listener.stop()
 
         if self._api_client:
             try:

@@ -15,7 +15,7 @@ import {
   ClockCircleOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
-import apiClient from '../../api/client';
+import { getEnveloped } from '../../api/client';
 import HealthTimeline from '../../components/charts/HealthTimeline';
 
 const { Title, Text } = Typography;
@@ -26,8 +26,7 @@ export default function CAHealthDashboard() {
   const { data: health, isLoading, refetch } = useQuery({
     queryKey: ['health-dashboard'],
     queryFn: async () => {
-      const { data } = await apiClient.get('/dashboard/health');
-      return data;
+      return getEnveloped('/dashboard/health');
     },
     refetchInterval: 30_000,
   });

@@ -28,9 +28,15 @@ variable "resource_group_name" {
 # Database
 # =========================================================================
 variable "postgres_sku" {
-  description = "PostgreSQL Flexible Server SKU"
+  description = "PostgreSQL Flexible Server SKU. Zone-redundant HA (see postgres_high_availability) requires General Purpose or Memory Optimized, e.g. GP_Standard_D2s_v3"
   type        = string
   default     = "B_Standard_B1ms"
+}
+
+variable "postgres_high_availability" {
+  description = "Enable zone-redundant high availability and geo-redundant backup. Requires a General Purpose/Memory Optimized SKU and a region with availability zones"
+  type        = bool
+  default     = false
 }
 
 variable "postgres_storage_gb" {
@@ -82,7 +88,14 @@ variable "secret_key" {
 }
 
 variable "agent_psk" {
-  description = "Pre-shared key for agent registration"
+  description = "Pre-shared key for agent registration (required in production)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "encryption_key" {
+  description = "Base64-encoded 32-byte AES-256 key for credential encryption (required in production)"
   type        = string
   sensitive   = true
   default     = ""
@@ -122,4 +135,19 @@ variable "acr_sku" {
   description = "Azure Container Registry SKU"
   type        = string
   default     = "Basic"
+}
+
+# =========================================================================
+# Networking / DNS
+# =========================================================================
+variable "public_domain" {
+  description = "Public domain name for the application (used for CORS origins and DNS)"
+  type        = string
+  default     = "certmanager.example.com"
+}
+
+variable "allowed_db_ips" {
+  description = "Additional public IPs allowed to reach PostgreSQL, e.g. operator workstations that run migrations"
+  type        = list(string)
+  default     = []
 }

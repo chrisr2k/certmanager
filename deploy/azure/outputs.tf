@@ -1,11 +1,16 @@
 output "api_fqdn" {
-  description = "API Container App FQDN"
+  description = "API Container App FQDN — point DNS for public_domain at this name"
   value       = azurerm_container_app.api.latest_revision_fqdn
 }
 
+output "public_domain" {
+  description = "Configured public domain for the application"
+  value       = var.public_domain
+}
+
 output "api_url" {
-  description = "Full API URL"
-  value       = "https://${azurerm_container_app.api.latest_revision_fqdn}"
+  description = "Full API URL (requires DNS for public_domain to resolve)"
+  value       = "https://${var.public_domain}"
 }
 
 output "database_fqdn" {
@@ -25,7 +30,7 @@ output "container_registry" {
 
 output "push_commands" {
   description = "Docker push commands for initial deploy"
-  value = <<-EOT
+  value       = <<-EOT
     # Login to ACR:
     az acr login --name ${azurerm_container_registry.main.name}
 
@@ -43,10 +48,10 @@ output "push_commands" {
 
 output "run_migrations" {
   description = "Command to run database migrations after first deploy"
-  value = <<-EOT
+  value       = <<-EOT
     az containerapp exec \
       --name ${azurerm_container_app.api.name} \
       --resource-group ${azurerm_resource_group.main.name} \
-      --command "python -m alembic -c alembic/alembic.ini upgrade head && python -m certmanager.cli seed"
+      --command "python -m certmanager.cli migrate && python -m certmanager.cli seed"
   EOT
 }

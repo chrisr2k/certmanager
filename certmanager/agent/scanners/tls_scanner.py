@@ -44,6 +44,7 @@ class TLSScanner(ScannerPlugin):
         ports: list[int] | None = None,
         timeout: float = 5.0,
         max_concurrency: int = 50,
+        max_hosts_per_cidr: int = 256,
     ):
         """Initialize the TLS scanner.
 
@@ -52,11 +53,14 @@ class TLSScanner(ScannerPlugin):
             ports: TCP ports to check for TLS.
             timeout: Connection timeout in seconds.
             max_concurrency: Maximum concurrent TLS handshakes.
+            max_hosts_per_cidr: Safety cap on hosts scanned per CIDR. The
+                scanner logs a warning whenever a range is truncated.
         """
         self.cidr_ranges = cidr_ranges or []
         self.ports = ports or [443, 8443, 636, 993, 995, 465, 3389]
         self.timeout = timeout
         self.max_concurrency = max_concurrency
+        self.max_hosts_per_cidr = max_hosts_per_cidr
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
     async def health_check(self) -> HealthStatus:
@@ -118,15 +122,26 @@ class TLSScanner(ScannerPlugin):
         for cidr in cidrs:
             try:
                 network = ipaddress.ip_network(cidr, strict=False)
-                # Limit to /24 or smaller to avoid scanning millions of IPs
+                # Limit to /16 or smaller to avoid scanning millions of IPs
                 if network.num_addresses > 65536:
                     errors.append(f"CIDR {cidr} too large ({network.num_addresses} hosts). Skipping.")
                     continue
-                # Only scan first 256 hosts per range for performance
+                # Cap hosts per range (safety + performance). Log loudly —
+                # a silent truncation reads as "full discovery" when it isn't.
                 hosts = list(network.hosts())
-                if len(hosts) > 256:
-                    hosts = hosts[:256]
-                    errors.append(f"CIDR {cidr} truncated to first 256 hosts.")
+                if len(hosts) > self.max_hosts_per_cidr:
+                    hosts = hosts[: self.max_hosts_per_cidr]
+                    logger.warning(
+                        "tls_scan_cidr_truncated",
+                        cidr=cidr,
+                        scanned=len(hosts),
+                        total=network.num_addresses,
+                        max_hosts=self.max_hosts_per_cidr,
+                    )
+                    errors.append(
+                        f"CIDR {cidr} truncated to first {self.max_hosts_per_cidr} hosts "
+                        f"(of {network.num_addresses})."
+                    )
 
                 for host in hosts:
                     for port in ports:

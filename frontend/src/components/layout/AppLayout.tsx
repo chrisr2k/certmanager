@@ -25,7 +25,9 @@ import {
   MenuUnfoldOutlined,
   CloudServerOutlined,
 } from '@ant-design/icons';
-import { useAuth } from '../../store/auth';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth, canAccessAdmin } from '../../store/auth';
+import apiClient from '../../api/client';
 
 const { Header, Sider, Content } = Layout;
 
@@ -39,6 +41,35 @@ export default function AppLayout({ children }: AppLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { token: themeToken } = theme.useToken();
+
+  const isAdmin = canAccessAdmin(user);
+
+  // Datacenter selector options come from the live topology. If the call
+  // fails or there are no datacenters, the selector is hidden gracefully.
+  const { data: topologyDatacenters } = useQuery({
+    queryKey: ['topology-nav'],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/dashboard/topology');
+      return data?.data?.datacenters ?? [];
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const datacenters: any[] = topologyDatacenters ?? [];
+
+  // Count of unacknowledged alert events for the header badge.
+  const { data: unackedEvents } = useQuery({
+    queryKey: ['alert-events-badge'],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/alerts/events', {
+        params: { is_acknowledged: false, page_size: 1 },
+      });
+      return data;
+    },
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+  const unackedCount: number = unackedEvents?.total ?? unackedEvents?.data?.length ?? 0;
 
   const handleLogout = async () => {
     await logout();
@@ -85,16 +116,18 @@ export default function AppLayout({ children }: AppLayoutProps) {
       icon: <FileTextOutlined />,
       label: 'Reports',
     },
-    {
-      key: 'admin',
-      icon: <SettingOutlined />,
-      label: 'Admin',
-      children: [
-        { key: '/admin/users', label: 'Users' },
-        { key: '/admin/agents', label: 'Agents' },
-        { key: '/audit-log', label: 'Audit Log' },
-      ],
-    },
+    ...(isAdmin
+      ? [{
+          key: 'admin',
+          icon: <SettingOutlined />,
+          label: 'Admin',
+          children: [
+            { key: '/admin/users', label: 'Users' },
+            { key: '/admin/agents', label: 'Agents' },
+            { key: '/audit-log', label: 'Audit Log' },
+          ],
+        }]
+      : []),
   ];
 
   const userMenuItems = [
@@ -117,7 +150,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
         <Menu
           mode="inline"
           selectedKeys={[location.pathname]}
-          defaultOpenKeys={['authorities', 'alerts', 'admin']}
+          defaultOpenKeys={['authorities', 'alerts', ...(isAdmin ? ['admin'] : [])]}
           items={menuItems}
           onClick={({ key }) => navigate(key)}
           style={{ borderRight: 0 }}
@@ -140,19 +173,20 @@ export default function AppLayout({ children }: AppLayoutProps) {
             onClick={() => setCollapsed(!collapsed)}
           />
           <Space size="middle">
-            {/* Datacenter selector */}
-            <Select
-              defaultValue="all"
-              style={{ width: 160 }}
-              options={[
-                { value: 'all', label: 'All Datacenters' },
-                { value: 'dc1', label: 'DC1 - us-east' },
-                { value: 'dc2', label: 'DC2 - eu-west' },
-              ]}
-              prefix={<CloudServerOutlined />}
-            />
-            {/* Alert badge */}
-            <Badge count={3} size="small">
+            {/* Datacenter selector — populated from live topology; hidden when unavailable */}
+            {datacenters.length > 0 && (
+              <Select
+                defaultValue="all"
+                style={{ width: 160 }}
+                options={[
+                  { value: 'all', label: 'All Datacenters' },
+                  ...datacenters.map((dc) => ({ value: dc.id, label: dc.name })),
+                ]}
+                prefix={<CloudServerOutlined />}
+              />
+            )}
+            {/* Alert badge — count of unacknowledged alert events */}
+            <Badge count={unackedCount} size="small" overflowCount={99}>
               <Button
                 type="text"
                 icon={<AlertOutlined />}

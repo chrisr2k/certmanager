@@ -38,7 +38,7 @@ class CertificateService:
     async def upsert_from_discovery(
         self,
         records: List[CertificateRecord],
-        source_ca_id: str,
+        source_ca_id: Optional[str],
         source_type: str,
         datacenter_id: Optional[str],
         scan_job_id: str,
@@ -52,7 +52,8 @@ class CertificateService:
 
         Args:
             records: List of normalized CertificateRecord from a CA connector.
-            source_ca_id: UUID of the CertificateAuthority that was scanned.
+            source_ca_id: UUID of the CertificateAuthority that was scanned,
+                or None for agent-discovered certs with no central CA row.
             source_type: The source type string (aws_acm, azure_keyvault, adcs, tls_scan).
             datacenter_id: UUID of the datacenter containing this CA.
             scan_job_id: UUID of the ScanJob that triggered this discovery.

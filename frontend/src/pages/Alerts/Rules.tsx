@@ -27,8 +27,18 @@ export default function AlertsRules() {
   });
 
   const createMutation = useMutation({
+    // The backend endpoint reads these fields as query params (plain scalar
+    // FastAPI arguments), so send both query params and a JSON body.
     mutationFn: async (values: any) => {
-      await apiClient.post('/alerts/rules', values);
+      const params = {
+        name: values.name,
+        description: values.description,
+        condition_type: values.condition_type,
+        condition_config: JSON.stringify(values.condition_config),
+        severity: values.severity,
+        cooldown_minutes: values.cooldown_minutes,
+      };
+      await apiClient.post('/alerts/rules', values, { params });
     },
     onSuccess: () => {
       message.success('Alert rule created');
@@ -36,7 +46,34 @@ export default function AlertsRules() {
       setModalOpen(false);
       form.resetFields();
     },
-    onError: (err: any) => message.error(err.response?.data?.message || 'Failed'),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, values }: { id: string; values: any }) => {
+      const params = {
+        name: values.name,
+        is_enabled: values.is_enabled,
+        condition_config: JSON.stringify(values.condition_config),
+        severity: values.severity,
+      };
+      await apiClient.patch(`/alerts/rules/${id}`, values, { params });
+    },
+    onSuccess: () => {
+      message.success('Alert rule updated');
+      queryClient.invalidateQueries({ queryKey: ['alert-rules'] });
+      setModalOpen(false);
+      form.resetFields();
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: async ({ id, is_enabled }: { id: string; is_enabled: boolean }) => {
+      await apiClient.patch(`/alerts/rules/${id}`, { is_enabled }, { params: { is_enabled } });
+    },
+    onSuccess: () => {
+      message.success('Rule updated');
+      queryClient.invalidateQueries({ queryKey: ['alert-rules'] });
+    },
   });
 
   const deleteMutation = useMutation({
@@ -56,6 +93,7 @@ export default function AlertsRules() {
       severity: 'warning',
       condition_type: 'expiry_days',
       cooldown_minutes: 60,
+      is_enabled: true,
     });
     setModalOpen(true);
   };
@@ -68,6 +106,7 @@ export default function AlertsRules() {
       condition_type: rule.condition_type,
       severity: rule.severity,
       cooldown_minutes: rule.cooldown_minutes,
+      is_enabled: rule.is_enabled,
       days: rule.condition_config?.days || 30,
       issuer_pattern: rule.condition_config?.issuer_pattern || '',
       status: rule.condition_config?.status || 'expired',
@@ -94,14 +133,21 @@ export default function AlertsRules() {
         break;
     }
 
-    createMutation.mutate({
+    const payload = {
       name: values.name,
       description: values.description,
       condition_type: values.condition_type,
       condition_config,
       severity: values.severity,
       cooldown_minutes: values.cooldown_minutes,
-    });
+      is_enabled: values.is_enabled,
+    };
+
+    if (editRule) {
+      updateMutation.mutate({ id: editRule.id, values: payload });
+    } else {
+      createMutation.mutate(payload);
+    }
   };
 
   const columns = [
@@ -165,7 +211,14 @@ export default function AlertsRules() {
       dataIndex: 'is_enabled',
       key: 'enabled',
       width: 80,
-      render: (e: boolean) => <Switch checked={e} disabled size="small" />,
+      render: (e: boolean, record: any) => (
+        <Switch
+          checked={e}
+          size="small"
+          loading={toggleMutation.isPending && toggleMutation.variables?.id === record.id}
+          onChange={(checked) => toggleMutation.mutate({ id: record.id, is_enabled: checked })}
+        />
+      ),
     },
     {
       title: 'Actions',
@@ -211,7 +264,7 @@ export default function AlertsRules() {
         open={modalOpen}
         onCancel={() => { setModalOpen(false); form.resetFields(); }}
         onOk={() => form.submit()}
-        confirmLoading={createMutation.isPending}
+        confirmLoading={createMutation.isPending || updateMutation.isPending}
         width={560}
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
@@ -281,6 +334,9 @@ export default function AlertsRules() {
             </Form.Item>
             <Form.Item name="cooldown_minutes" label="Cooldown" style={{ flex: 1 }}>
               <InputNumber min={0} max={1440} style={{ width: '100%' }} addonAfter="minutes" />
+            </Form.Item>
+            <Form.Item name="is_enabled" label="Enabled" valuePropName="checked" style={{ flex: 1 }}>
+              <Switch />
             </Form.Item>
           </Space>
         </Form>

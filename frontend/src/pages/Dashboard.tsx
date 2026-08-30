@@ -14,7 +14,7 @@ import {
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import apiClient from '../api/client';
+import apiClient, { getEnveloped } from '../api/client';
 import TopologyGraph from '../components/charts/TopologyGraph';
 import HealthTimeline from '../components/charts/HealthTimeline';
 import ExpiryGantt from '../components/charts/ExpiryGantt';
@@ -38,8 +38,7 @@ export default function DashboardPage() {
   const { data: topology, isLoading: topoLoading } = useQuery({
     queryKey: ['topology'],
     queryFn: async () => {
-      const { data } = await apiClient.get('/dashboard/topology');
-      return data;
+      return getEnveloped('/dashboard/topology');
     },
     refetchInterval: 30_000,
   });
@@ -48,8 +47,7 @@ export default function DashboardPage() {
   const { data: health, isLoading: healthLoading } = useQuery({
     queryKey: ['health-overview'],
     queryFn: async () => {
-      const { data } = await apiClient.get('/dashboard/health');
-      return data;
+      return getEnveloped('/dashboard/health');
     },
     refetchInterval: 30_000,
   });

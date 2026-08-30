@@ -87,10 +87,17 @@ def migrate(
     revision: str = typer.Option("head", help="Target revision"),
 ):
     """Run database migrations."""
+    from pathlib import Path
+
     from alembic import command
     from alembic.config import Config
 
-    alembic_cfg = Config("alembic/alembic.ini")
+    # Resolve the alembic directory relative to this package, not the CWD
+    project_root = Path(__file__).resolve().parent.parent
+    alembic_dir = project_root / "alembic"
+    alembic_cfg = Config(str(alembic_dir / "alembic.ini"))
+    alembic_cfg.set_main_option("script_location", str(alembic_dir))
+
     command.upgrade(alembic_cfg, revision)
     console.print(f"[bold green]Migrations complete[/] — target: {revision}")
 
@@ -121,22 +128,106 @@ certs_app = typer.Typer(help="Certificate operations", no_args_is_help=True)
 app.add_typer(certs_app, name="certs")
 
 
+def _api_token(token: Optional[str]) -> str:
+    """Resolve an API token from --token or CERTMGMT_CLI_TOKEN."""
+    import os
+
+    resolved = token or os.environ.get("CERTMGMT_CLI_TOKEN", "")
+    if not resolved:
+        console.print(
+            "[red]No API token — pass --token or set CERTMGMT_CLI_TOKEN "
+            "(use POST /api/v1/auth/login to obtain one).[/]"
+        )
+        raise typer.Exit(1)
+    return resolved
+
+
+def _api_base(api_url: Optional[str]) -> str:
+    from certmanager.core.config import get_settings
+
+    return (api_url or f"http://localhost:{get_settings().api_port}").rstrip("/")
+
+
 @certs_app.command("list")
 def certs_list(
     status: Optional[str] = typer.Option(None, help="Filter by status"),
     expiring_in: Optional[int] = typer.Option(None, help="Expiring in N days"),
     dc: Optional[str] = typer.Option(None, help="Filter by datacenter code"),
     limit: int = typer.Option(50, help="Max results"),
+    api_url: Optional[str] = typer.Option(None, help="Central API URL"),
+    token: Optional[str] = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
 ):
-    """List certificates."""
-    console.print("[yellow]CLI certificate listing requires a running API server.[/]")
-    console.print("Use the REST API at GET /api/v1/certificates or the web dashboard.")
+    """List certificates via the API."""
+    import httpx
+
+    params = {"page_size": limit}
+    if status:
+        params["status"] = status
+    if expiring_in:
+        params["expiring_in_days"] = expiring_in
+    if dc:
+        params["datacenter_id"] = dc
+
+    try:
+        resp = httpx.get(
+            f"{_api_base(api_url)}/api/v1/certificates",
+            params=params,
+            headers={"Authorization": f"Bearer {_api_token(token)}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        console.print(f"[red]API request failed: {e}[/]")
+        raise typer.Exit(1)
+
+    body = resp.json()
+    items = body.get("items", [])
+    table = Table(title=f"Certificates ({body.get('total', len(items))} total)")
+    table.add_column("ID", style="dim")
+    table.add_column("Common Name")
+    table.add_column("Status")
+    table.add_column("Not After")
+    table.add_column("Source")
+    for cert in items:
+        table.add_row(
+            cert.get("id", "")[:8],
+            cert.get("common_name") or "(none)",
+            cert.get("status", ""),
+            (cert.get("not_after") or "")[:10],
+            cert.get("source_type", ""),
+        )
+    console.print(table)
 
 
 @certs_app.command("show")
-def certs_show(cert_id: str):
-    """Show certificate details."""
-    console.print(f"[yellow]Use: GET /api/v1/certificates/{cert_id}[/]")
+def certs_show(
+    cert_id: str = typer.Argument(..., help="Certificate ID"),
+    api_url: Optional[str] = typer.Option(None, help="Central API URL"),
+    token: Optional[str] = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
+):
+    """Show certificate details via the API."""
+    import httpx
+
+    try:
+        resp = httpx.get(
+            f"{_api_base(api_url)}/api/v1/certificates/{cert_id}",
+            headers={"Authorization": f"Bearer {_api_token(token)}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        console.print(f"[red]API request failed: {e}[/]")
+        raise typer.Exit(1)
+
+    cert = resp.json().get("data", {})
+    table = Table(title=f"Certificate {cert_id[:8]}")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    for key, value in cert.items():
+        if isinstance(value, (dict, list)):
+            value = str(value)
+        table.add_row(str(key), str(value))
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------
@@ -147,9 +238,40 @@ app.add_typer(ca_app, name="ca")
 
 
 @ca_app.command("list")
-def ca_list():
-    """List certificate authorities."""
-    console.print("[yellow]Use: GET /api/v1/authorities or check the web dashboard.[/]")
+def ca_list(
+    api_url: Optional[str] = typer.Option(None, help="Central API URL"),
+    token: Optional[str] = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
+):
+    """List certificate authorities via the API."""
+    import httpx
+
+    try:
+        resp = httpx.get(
+            f"{_api_base(api_url)}/api/v1/authorities",
+            headers={"Authorization": f"Bearer {_api_token(token)}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        console.print(f"[red]API request failed: {e}[/]")
+        raise typer.Exit(1)
+
+    authorities = resp.json().get("data", [])
+    table = Table(title=f"Certificate Authorities ({len(authorities)})")
+    table.add_column("ID", style="dim")
+    table.add_column("Name")
+    table.add_column("Type")
+    table.add_column("Health")
+    table.add_column("Last Scan")
+    for ca in authorities:
+        table.add_row(
+            ca.get("id", "")[:8],
+            ca.get("name", ""),
+            ca.get("ca_type", ""),
+            ca.get("health_status", "unknown"),
+            (ca.get("last_scan_at") or "")[:10],
+        )
+    console.print(table)
 
 
 @ca_app.command("test")
@@ -168,9 +290,29 @@ app.add_typer(scan_app, name="scan")
 @scan_app.command("run")
 def scan_run(
     scan_type: str = typer.Option("full_discovery", help="Scan type"),
+    api_url: Optional[str] = typer.Option(None, help="Central API URL"),
+    token: Optional[str] = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
 ):
-    """Run a discovery scan."""
-    console.print("[yellow]Use: POST /api/v1/scans to trigger a scan.[/]")
+    """Run a discovery scan via the API."""
+    import httpx
+
+    try:
+        resp = httpx.post(
+            f"{_api_base(api_url)}/api/v1/scans",
+            json={"job_type": scan_type, "scope_config": {}},
+            headers={"Authorization": f"Bearer {_api_token(token)}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        console.print(f"[red]API request failed: {e}[/]")
+        raise typer.Exit(1)
+
+    data = resp.json().get("data", {})
+    console.print(
+        f"[bold green]Scan queued:[/] {data.get('scan_job_id')} "
+        f"({data.get('job_type')}) — {data.get('message', '')}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -229,19 +371,30 @@ def agent_init(
 
 
 @agent_app.command("run")
-def agent_run():
+def agent_run(
+    config_path: str = typer.Option(None, "--config", help="Path to agent_config.json"),
+    data_dir: str = typer.Option(None, "--data-dir", help="Override agent data directory"),
+):
     """Run the agent main loop (polling mode)."""
     import asyncio
     from certmanager.agent.config import load_agent_config
     from certmanager.agent.agent import run_agent
 
-    settings = load_agent_config()
+    settings = load_agent_config(config_path)
+
+    if data_dir:
+        from pathlib import Path
+
+        data_path = Path(data_dir)
+        settings.data_dir = str(data_path)
+        settings.local_db_path = str(data_path / "agent.db")
 
     console.print(f"[bold]Starting CertManager Agent[/]")
     console.print(f"  Name: {settings.agent_name}")
     console.print(f"  Type: {settings.agent_type}")
     console.print(f"  API:  {settings.api_url}")
     console.print(f"  DC:   {settings.datacenter_code or '(not set)'}")
+    console.print(f"  Data: {settings.local_db_path}")
 
     exit_code = asyncio.run(run_agent(settings))
     raise typer.Exit(exit_code)
@@ -275,7 +428,7 @@ def agent_export(
 
     console.print(f"[green]Exported {len(pending)} results to {path}[/]")
     console.print("[bold]Transfer this file to a machine with central API access and run:[/]")
-    console.print(f"  certmanager import {path}")
+    console.print(f"  certmanager import-data {path} --token <api-token>")
 
 
 @agent_app.command("run-job")
@@ -311,8 +464,27 @@ def agent_run_job(
         )
         agent_inst._load_scanners()
 
-        all_results = []
+        # Select the scanner matching the job type (an adcs_scan job must not
+        # also trigger a TLS scan and vice versa).
+        job_type = job.get("job_type", "unknown")
+        scanner_map = {
+            "adcs": ["adcs_scan", "ca_sync", "full_discovery"],
+            "tls_scanner": ["tls_scan"],
+        }
+        selected = []
         for scanner in agent_inst._scanners:
+            if job_type in scanner_map.get(scanner.name, []):
+                selected.append(scanner)
+
+        if not selected:
+            console.print(
+                f"[red]No scanner on this agent handles job_type '{job_type}'. "
+                f"Available: {[s.name for s in agent_inst._scanners]}[/]"
+            )
+            raise typer.Exit(1)
+
+        all_results = []
+        for scanner in selected:
             scope = job.get("scope_config", {})
             result = await scanner.scan(scope)
             all_results.append(result.to_api_result())
@@ -337,9 +509,12 @@ def agent_run_job(
 def import_data(
     file: str = typer.Argument(..., help="JSON file of agent results to import"),
     api_url: str = typer.Option(None, help="Central API URL (uses config default if not set)"),
+    token: str = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
 ):
     """Import agent results into the central CertManager API."""
+    from datetime import datetime
     from pathlib import Path
+
     from certmanager.agent.api_client import AgentAPIClient
     from certmanager.core.config import get_settings
 
@@ -349,7 +524,7 @@ def import_data(
 
     settings = get_settings()
 
-    # Verify integrity
+    # Verify integrity (HMAC with the agent PSK — REQUIRED)
     payload = AgentAPIClient.verify_export(file, secret=settings.agent.psk)
     if payload is None:
         console.print("[red]Export file verification FAILED — file may be tampered.[/]")
@@ -364,69 +539,84 @@ def import_data(
     import asyncio
     import aiohttp
 
-    api_base = api_url or f"http://localhost:{settings.api_port}"
+    api_base = _api_base(api_url)
+    auth_headers = {
+        "Authorization": f"Bearer {_api_token(token)}",
+        "Content-Type": "application/json",
+    }
 
     async def _submit():
         submitted = 0
         failed = 0
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=auth_headers) as session:
             for result in payload.get("results", []):
-                # Find the appropriate endpoint — for air-gap we POST directly
-                # to the certificates import endpoint
+                # First, create a scan job to associate with
                 try:
-                    # First, create a scan job to associate with
                     async with session.post(
                         f"{api_base}/api/v1/scans",
                         json={
                             "job_type": "manual_import",
-                            "scope_config": {},
+                            "scope_config": {"agent_name": payload.get("agent_name")},
                         },
-                        headers={"Content-Type": "application/json"},
                     ) as resp:
                         if resp.status == 201:
                             resp_data = await resp.json()
                             scan_job_id = resp_data.get("data", {}).get("scan_job_id")
                         else:
                             scan_job_id = None
-
-                    # Submit certificates
-                    certs = result.get("certificates", [])
-                    for cert in certs:
-                        try:
-                            async with session.post(
-                                f"{api_base}/api/v1/certificates",
-                                json={
-                                    "common_name": cert.get("common_name"),
-                                    "subject": cert.get("subject"),
-                                    "issuer": cert.get("issuer"),
-                                    "serial_number": cert.get("serial_number"),
-                                    "thumbprint_sha256": cert.get("thumbprint"),
-                                    "not_before": cert.get("not_before"),
-                                    "not_after": cert.get("not_after"),
-                                    "validity_days": 365,
-                                    "cert_type": cert.get("cert_type", "server"),
-                                    "key_algorithm": cert.get("key_algorithm"),
-                                    "signature_algorithm": cert.get("signature_algorithm"),
-                                    "sans": cert.get("sans", []),
-                                    "source_type": cert.get("source", "tls_scan"),
-                                    "source_detail": cert.get("source_detail", {}),
-                                },
-                                headers={"Content-Type": "application/json"},
-                            ) as cert_resp:
-                                if cert_resp.status == 201:
-                                    submitted += 1
-                                else:
-                                    failed += 1
-                        except Exception:
-                            failed += 1
-
                 except Exception as e:
-                    console.print(f"[red]API connection error: {e}[/]")
-                    failed += len(result.get("certificates", []))
-                    break
+                    console.print(f"[red]Scan job creation failed: {e}[/]")
+                    scan_job_id = None
+
+                # Submit certificates
+                certs = result.get("certificates", [])
+                for cert in certs:
+                    try:
+                        not_before = cert.get("not_before")
+                        not_after = cert.get("not_after")
+                        validity_days = 365
+                        if not_before and not_after:
+                            try:
+                                nb = datetime.fromisoformat(not_before)
+                                na = datetime.fromisoformat(not_after)
+                                validity_days = int((na - nb).total_seconds() / 86400)
+                            except ValueError:
+                                pass
+
+                        async with session.post(
+                            f"{api_base}/api/v1/certificates",
+                            json={
+                                "common_name": cert.get("common_name"),
+                                "subject": cert.get("subject"),
+                                "issuer": cert.get("issuer"),
+                                "serial_number": cert.get("serial_number"),
+                                "thumbprint_sha256": cert.get("thumbprint"),
+                                "not_before": not_before,
+                                "not_after": not_after,
+                                "validity_days": validity_days,
+                                "cert_type": cert.get("cert_type", "server"),
+                                "key_algorithm": cert.get("key_algorithm"),
+                                "signature_algorithm": cert.get("signature_algorithm"),
+                                "sans": cert.get("sans", []),
+                                "source_type": cert.get("source", "tls_scan"),
+                                "source_detail": {
+                                    "imported_from": payload.get("agent_name"),
+                                    "scan_job_id": scan_job_id,
+                                    **(cert.get("source_detail") or {}),
+                                },
+                            },
+                        ) as cert_resp:
+                            if cert_resp.status == 201:
+                                submitted += 1
+                            else:
+                                failed += 1
+                    except Exception:
+                        failed += 1
 
         console.print(f"\n[bold]Import complete:[/] {submitted} succeeded, {failed} failed")
+        if failed:
+            console.print("[yellow]Some certificates failed — check the API logs.[/]")
 
     asyncio.run(_submit())
 

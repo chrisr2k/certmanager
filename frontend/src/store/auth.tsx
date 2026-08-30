@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import apiClient from '../api/client';
+import apiClient, { setUnauthorizedHandler } from '../api/client';
 
 interface UserProfile {
   id: string;
@@ -48,6 +48,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [refreshProfile]);
 
+  // Let the API client reset React state when a session expires (e.g. after a
+  // failed token refresh), so the app redirects via state instead of a full
+  // page reload.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
   const login = async (email: string, password: string, mfaCode?: string) => {
     const { data } = await apiClient.post('/auth/login', {
       email,
@@ -94,4 +106,13 @@ export function useAuth() {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
+}
+
+/**
+ * Whether a user may see admin-only areas (user management, agent admin,
+ * audit log). Backend seeds roles: admin, operator, viewer, auditor.
+ */
+export function canAccessAdmin(user: UserProfile | null | undefined): boolean {
+  if (!user) return false;
+  return user.is_superuser || (user.roles ?? []).includes('admin');
 }

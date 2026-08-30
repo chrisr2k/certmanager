@@ -24,7 +24,7 @@ function TLSScanTargets({ agentId, agentType }: { agentId: string; agentType: st
     queryKey: ['scan-targets', agentId],
     queryFn: async () => {
       const { data } = await apiClient.get(`/agents/${agentId}/scan-targets`);
-      return data || {};
+      return data.data ?? {};
     },
     enabled: !!agentId,
   });
@@ -43,7 +43,6 @@ function TLSScanTargets({ agentId, agentType }: { agentId: string; agentType: st
       setEditMode(false);
       refetch();
     },
-    onError: (err: any) => message.error(err.response?.data?.message || 'Failed'),
   });
 
   const scanMutation = useMutation({
@@ -51,9 +50,9 @@ function TLSScanTargets({ agentId, agentType }: { agentId: string; agentType: st
       await apiClient.post(`/agents/${agentId}/scan-targets/scan`);
     },
     onSuccess: (resp: any) => {
-      message.success(`TLS scan queued: ${resp.data?.scan_job_id?.slice(0, 8)}...`);
+      const jobId = resp?.data?.data?.scan_job_id;
+      message.success(jobId ? `TLS scan queued: ${jobId.slice(0, 8)}...` : 'TLS scan queued');
     },
-    onError: (err: any) => message.error(err.response?.data?.message || 'Failed'),
   });
 
   const currentCidrs = targets?.cidr_ranges || [];
@@ -164,9 +163,6 @@ export default function AdminAgents() {
       message.success('Agent approved');
       queryClient.invalidateQueries({ queryKey: ['agents'] });
     },
-    onError: (err: any) => {
-      message.error(err.response?.data?.message || 'Failed to approve agent');
-    },
   });
 
   // Delete mutation
@@ -178,9 +174,6 @@ export default function AdminAgents() {
       message.success('Agent removed');
       queryClient.invalidateQueries({ queryKey: ['agents'] });
       setDetailOpen(false);
-    },
-    onError: (err: any) => {
-      message.error(err.response?.data?.message || 'Failed to remove agent');
     },
   });
 

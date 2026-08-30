@@ -1,0 +1,23 @@
+# Non-sensitive configuration.
+#
+# IMPORTANT: the application reads pydantic-settings nested env vars with the
+# "__" delimiter (prefix CERTMGMT_). Flat names such as CERTMGMT_DATABASE_URL
+# are silently ignored — always use the nested form below.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: certmanager-config
+  namespace: certmanager
+  labels:
+    app.kubernetes.io/name: certmanager
+data:
+  CERTMGMT_ENVIRONMENT: "production"
+  CERTMGMT_LOG_FORMAT: "json"
+  CERTMGMT_API_HOST: "0.0.0.0"
+  CERTMGMT_API_PORT: "8000"
+  # JSON-encoded list of allowed CORS origins
+  CERTMGMT_CORS__ORIGINS: '["https://certmanager.example.com"]'
+  CERTMGMT_SMTP__HOST: "smtp.example.com"
+  CERTMGMT_SMTP__PORT: "587"
+  CERTMGMT_SMTP__USE_TLS: "true"
+  CERTMGMT_SMTP__FROM_ADDRESS: "CertManager <noreply@certmanager.example.com>"
