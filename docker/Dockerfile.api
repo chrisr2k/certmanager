@@ -17,12 +17,12 @@ RUN apt-get update && \
     fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies (runtime only — no dev extras in images)
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e .
-
-# Copy application code
+# Install Python dependencies (runtime only — no dev extras in images).
+# pyproject declares README.md, so both must be present for the wheel build.
+COPY pyproject.toml README.md ./
 COPY certmanager/ ./certmanager/
+RUN pip install --no-cache-dir .
+
 COPY alembic/ ./alembic/
 
 # Expose API port

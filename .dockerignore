@@ -41,10 +41,6 @@ agent_data/
 *.db
 *.db-journal
 
-# Docs
-*.md
-!README.md
-
 # CI/CD
 .github/
 

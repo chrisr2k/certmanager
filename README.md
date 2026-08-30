@@ -41,9 +41,9 @@ Multi-datacenter, multi-cloud certificate lifecycle management supporting AWS AC
 # Clone and enter project
 cd certmanager
 
-# Copy environment config
+# Copy environment config (auto-loaded from .env in the working directory)
 cp .env.example .env
-# Edit .env with your settings
+# Edit .env with your settings — note the nested __ env var names
 
 # Start infrastructure (PostgreSQL + Redis)
 docker compose up -d postgres redis
@@ -96,7 +96,10 @@ certmanager certs show <id>   # Show certificate detail
 
 # Agent initialization (for datacenter deployment)
 certmanager agent init --url https://central.example.com --psk <key>
-certmanager agent run          # Run agent polling loop
+certmanager agent run --config agent_config.json   # Run agent polling loop
+
+# Air-gap import (HMAC-verified with the agent PSK)
+certmanager import-data results.json --token <api-token>
 ```
 
 ## API Overview
@@ -152,17 +155,49 @@ certmanager/
 └── docker-compose.yml    # Full stack deployment
 ```
 
+## Testing
+
+```bash
+pip install -e ".[dev]"
+pytest            # 91 tests: agent flow, auth/MFA, RBAC, API keys, config, crypto
+ruff check certmanager/ tests/ alembic/
+ruff format --check certmanager/ tests/ alembic/
+```
+
+The test suite runs against SQLite (dialect-variant column types keep the
+model layer portable); production uses the PostgreSQL migration in
+`alembic/versions/`.
+
 ## Implementation Status
 
-- [x] Phase 1: Foundation (project scaffold, 16 ORM models, FastAPI app, 10 API routers, auth, frontend shell, Docker)
+- [x] Phase 1: Foundation (project scaffold, ORM models, FastAPI app, 12 API routers, auth + MFA, frontend shell, Docker)
 - [x] Phase 2: Certificate Inventory (AWS ACM + Azure KV + AD CS connectors, DiscoveryService, CertificateService, Celery workers)
 - [x] Phase 3: Multi-CA + Multi-DC (topology graph, CA health dashboard, expiry Gantt, multi-DC views)
-- [x] Phase 4: Datacenter Agent (main loop, AD CS + TLS scanners, local SQLite buffer, air-gap export/import)
-- [x] Phase 5: Alerting + CT Monitoring (5 condition types, 4 notification backends, CT log monitor, alert rule builder UI)
-- [x] Phase 6: Compliance + CLI (3 Jinja2 report templates, PDF/CSV/JSON generation, audit log viewer, full CLI)
-- [x] Phase 7: Hardening (test suite, Kubernetes manifests with HPA, ingress, kustomization)
+- [x] Phase 4: Datacenter Agent (main loop, AD CS + TLS scanners, local SQLite buffer, air-gap export/import, connector listener with optional mTLS)
+- [x] Phase 5: Alerting + CT Monitoring (condition types, 4 notification backends, CT log monitor, alert rule builder UI)
+- [x] Phase 6: Compliance + CLI (Jinja2 report templates, PDF/CSV/JSON generation, audit log viewer, full CLI)
+- [x] Phase 7: Hardening (91-test suite, Kubernetes manifests with HPA, ingress, kustomization in `deploy/k8s/`, Terraform for AWS + Azure, refresh-token rotation, encrypted CA credentials, RBAC read enforcement, API keys)
 
-**101 source files** across Python (backend), TypeScript/React (frontend), PowerShell (agent), and YAML (Kubernetes).
+### Known limitations
+
+- **AD CS lifecycle operations** (issue/renew/revoke through the connector)
+  return a clear "not supported" error — the agent listener serves
+  health + discovery today; local issuance via certreq is a future phase.
+- **AWS ACM revocation** is not possible (ACM has no revoke API) — the
+  connector raises instead of faking it.
+- The default admin credentials exist for development convenience; the
+  production config guard refuses to boot with default secrets.
+
+## Security notes
+
+- CA credentials are encrypted at rest (Fernet, `CERTMGMT_SECURITY__ENCRYPTION_KEY`)
+  and redacted from API responses and logs.
+- Refresh tokens rotate; replaying an old token revokes the whole family.
+- X-API-Key authentication is supported with per-key scopes.
+- Production/staging refuse to start with default secrets or dev DB URLs.
+- Agent JWTs live 30 days; agents re-register idempotently with their PSK
+  before expiry. Agent tokens are never persisted to disk (only the
+  permanent listener credential is kept in the ACL-protected data dir).
 
 ## License
 
