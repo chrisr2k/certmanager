@@ -30,6 +30,19 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(..., description="Current refresh token")
 
 
+class LogoutRequest(BaseModel):
+    """Logout request — the refresh token revokes its family server-side."""
+
+    refresh_token: Optional[str] = Field(default=None, description="Refresh token to revoke")
+
+
+class MFARecoveryRequest(BaseModel):
+    """MFA recovery using a one-time recovery code."""
+
+    email: str = Field(..., description="Account email address")
+    recovery_code: str = Field(..., description="One-time recovery code")
+
+
 class MFASetupResponse(BaseModel):
     """Response after initiating MFA setup."""
 
@@ -39,10 +52,14 @@ class MFASetupResponse(BaseModel):
 
 
 class MFAVerifyRequest(BaseModel):
-    """Verify MFA setup with a TOTP code."""
+    """Verify MFA setup with a TOTP code.
+
+    The secret is taken from the server-side pending setup — it is NOT
+    trusted from the client (a hijacked session must not be able to set
+    an attacker-chosen TOTP secret).
+    """
 
     code: str = Field(..., description="TOTP code from authenticator app")
-    secret: str = Field(..., description="TOTP secret from setup response")
 
 
 class MFAVerifyResponse(BaseModel):

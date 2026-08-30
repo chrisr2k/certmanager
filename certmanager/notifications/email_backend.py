@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import html
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -53,34 +55,50 @@ class EmailBackend(NotificationBackend):
             msg["From"] = from_addr
             msg["To"] = ", ".join(to_addrs)
 
-            # HTML body
+            # HTML body — alert content is escaped (it can contain
+            # attacker-influenced certificate metadata like CNs/SANs)
             severity_color = {
                 "critical": "#ff4d4f",
                 "warning": "#faad14",
                 "info": "#1677ff",
             }.get(message.severity, "#1677ff")
 
+            esc = html.escape
+            cert_line = (
+                f'<p><strong>Certificate:</strong> {esc(message.cert_common_name)}</p>'
+                if message.cert_common_name
+                else ""
+            )
+            action_line = (
+                f'<p><a href="{esc(message.action_url or "", quote=True)}" style="color: #1677ff;">View in CertManager →</a></p>'
+                if message.action_url
+                else ""
+            )
+
             html_body = f"""\
 <html><body style="font-family: Arial, sans-serif; padding: 20px;">
   <div style="border-left: 4px solid {severity_color}; padding-left: 12px; margin-bottom: 16px;">
-    <h2 style="color: {severity_color}; margin: 0;">{message.title}</h2>
-    <p style="color: #666; font-size: 13px;">Severity: {message.severity.upper()}</p>
+    <h2 style="color: {severity_color}; margin: 0;">{esc(message.title)}</h2>
+    <p style="color: #666; font-size: 13px;">Severity: {esc(message.severity.upper())}</p>
   </div>
-  <p>{message.body}</p>
-  {f'<p><strong>Certificate:</strong> {message.cert_common_name}</p>' if message.cert_common_name else ''}
-  {f'<p><a href="{message.action_url}" style="color: #1677ff;">View in CertManager →</a></p>' if message.action_url else ''}
+  <p>{esc(message.body)}</p>
+  {cert_line}
+  {action_line}
   <hr style="border: none; border-top: 1px solid #eee; margin-top: 24px;" />
   <p style="font-size: 11px; color: #999;">This is an automated notification from CertManager.</p>
 </body></html>"""
 
             msg.attach(MIMEText(html_body, "html"))
 
-            # Send via SMTP
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-                server.starttls()
-                if smtp_user and smtp_password:
-                    server.login(smtp_user, smtp_password)
-                server.sendmail(from_addr, to_addrs, msg.as_string())
+            # smtplib is synchronous — send off the event loop
+            def _send_smtp():
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                    server.starttls()
+                    if smtp_user and smtp_password:
+                        server.login(smtp_user, smtp_password)
+                    server.sendmail(from_addr, to_addrs, msg.as_string())
+
+            await asyncio.to_thread(_send_smtp)
 
             logger.info(
                 "email_sent",

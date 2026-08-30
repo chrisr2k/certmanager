@@ -94,9 +94,11 @@ class AzureKeyVaultConnector(CAConnector):
 
     async def health_check(self) -> CAHealthResult:
         """Test Key Vault connectivity by listing certificates (max 1 page)."""
+        import asyncio
+
         start = time.monotonic()
 
-        try:
+        def _check() -> int:
             client = self._get_cert_client()
             # Use list_properties_of_certificates for a lightweight check
             count = 0
@@ -104,6 +106,11 @@ class AzureKeyVaultConnector(CAConnector):
                 count += 1
                 if count >= 1:
                     break
+            return count
+
+        try:
+            # The Azure SDK is synchronous — run it off the event loop
+            count = await asyncio.to_thread(_check)
 
             latency_ms = (time.monotonic() - start) * 1000
             return CAHealthResult(
@@ -144,17 +151,20 @@ class AzureKeyVaultConnector(CAConnector):
         Returns:
             List of normalized CertificateRecord objects.
         """
-        client = self._get_cert_client()
+        import asyncio
+
         records: List[CertificateRecord] = []
 
-        try:
+        def _discover() -> List[CertificateRecord]:
+            client = self._get_cert_client()
+            found: List[CertificateRecord] = []
             # List all certificates
             for cert_props in client.list_properties_of_certificates():
                 try:
                     # Get the full certificate with policy (not the private key)
                     certificate = client.get_certificate(cert_props.name)
                     record = self._parse_certificate(certificate)
-                    records.append(record)
+                    found.append(record)
                 except Exception as e:
                     logger.warning(
                         "azure_cert_parse_failed",
@@ -163,7 +173,11 @@ class AzureKeyVaultConnector(CAConnector):
                         error=str(e),
                     )
                     continue
+            return found
 
+        try:
+            # The Azure SDK is synchronous — run it off the event loop
+            records = await asyncio.to_thread(_discover)
         except Exception as e:
             raise ConnectorError(f"Key Vault discovery failed: {e}")
 
@@ -316,29 +330,33 @@ class AzureKeyVaultConnector(CAConnector):
             WellKnownIssuerNames,
         )
 
-        client = self._get_cert_client()
+        import asyncio
 
-        # Build certificate policy
-        policy = CertificatePolicy(
-            issuer_name=WellKnownIssuerNames.self,
-            subject=f"CN={request.common_name}",
-            san_dns_names=request.sans if request.sans else None,
-            exportable=True,  # Allow private key export
-            key_type="RSA" if "RSA" in request.key_algorithm else "EC",
-            key_size=_rsa_key_size(request.key_algorithm),
-            reuse_key=False,
-            content_type=CertificateContentType.pkcs12,
-            validity_lifetime=int(request.validity_days),
-        )
+        def _issue():
+            client = self._get_cert_client()
 
-        # Begin certificate creation
-        create_op = client.begin_create_certificate(
-            certificate_name=request.common_name.replace("*", "wildcard"),
-            policy=policy,
-        )
+            # Build certificate policy
+            policy = CertificatePolicy(
+                issuer_name=WellKnownIssuerNames.self,
+                subject=f"CN={request.common_name}",
+                san_dns_names=request.sans if request.sans else None,
+                exportable=True,  # Allow private key export
+                key_type="RSA" if "RSA" in request.key_algorithm else "EC",
+                key_size=_rsa_key_size(request.key_algorithm),
+                reuse_key=False,
+                content_type=CertificateContentType.pkcs12,
+                validity_lifetime=int(request.validity_days),
+            )
 
-        # Wait for completion (synchronous for now — can be made async)
-        certificate = create_op.result()
+            # Begin certificate creation and wait for completion
+            create_op = client.begin_create_certificate(
+                certificate_name=request.common_name.replace("*", "wildcard"),
+                policy=policy,
+            )
+            return create_op.result()
+
+        # The Azure SDK is synchronous — run it off the event loop
+        certificate = await asyncio.to_thread(_issue)
 
         cert_id = certificate.id or f"{self.vault_url}/certificates/{request.common_name}"
         record = self._parse_certificate(certificate)
@@ -355,15 +373,20 @@ class AzureKeyVaultConnector(CAConnector):
         Key Vault supports auto-renewal via certificate policies.
         This triggers a manual renewal if auto-renew is not configured.
         """
-        client = self._get_cert_client()
+        import asyncio
+
         cert_name = source_id.split("/certificates/")[1].split("/")[0]
 
-        try:
+        def _renew():
+            client = self._get_cert_client()
             create_op = client.begin_create_certificate(
                 certificate_name=cert_name,
                 policy=client.get_certificate_policy(cert_name),
             )
-            certificate = create_op.result()
+            return create_op.result()
+
+        try:
+            certificate = await asyncio.to_thread(_renew)
             record = self._parse_certificate(certificate)
             return IssueResult(certificate=record, private_key_pem=None)
         except Exception as e:
@@ -376,17 +399,19 @@ class AzureKeyVaultConnector(CAConnector):
 
         Sets the certificate to disabled state.
         """
-        client = self._get_cert_client()
+        import asyncio
+
         cert_name = source_id.split("/certificates/")[1].split("/")[0]
 
-        try:
-            # Disable the certificate
-            from azure.keyvault.certificates import CertificateProperties
-
+        def _disable():
+            client = self._get_cert_client()
             client.update_certificate_properties(
                 certificate_name=cert_name,
                 enabled=False,
             )
+
+        try:
+            await asyncio.to_thread(_disable)
             return True
         except Exception as e:
             raise ConnectorError(f"Certificate disable failed: {e}")

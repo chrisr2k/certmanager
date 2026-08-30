@@ -1,8 +1,9 @@
 """Authentication and authorization security primitives.
 
 - JWT creation and validation (access + refresh tokens)
-- Password hashing (bcrypt via passlib)
-- Refresh token family management (for rotation + reuse detection)
+- Password hashing (bcrypt directly — passlib 1.7.4 is unmaintained)
+- Refresh token family management (for rotation + reuse detection),
+  backed by Redis when available with an in-memory fallback
 """
 
 from __future__ import annotations
@@ -11,23 +12,27 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from certmanager.core.config import get_settings
 
 # --- Password hashing ---
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
     """Hash a plain-text password with bcrypt."""
-    return _pwd_context.hash(password)
+    rounds = get_settings().security.bcrypt_rounds
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=rounds)).decode()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain-text password against a bcrypt hash."""
-    return _pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+    except ValueError:
+        # Malformed hash in DB — treat as mismatch, never raise
+        return False
 
 
 # --- JWT ---
@@ -115,13 +120,103 @@ def decode_token(token: str) -> dict[str, Any]:
     return jwt.decode(token, _get_secret_key(), algorithms=[ALGORITHM])
 
 
-def get_token_type(token: str) -> str:
-    """Extract the token type (access/refresh) without full validation."""
+# --- Refresh token family store (rotation + reuse detection) ---
+
+_IN_MEMORY_FAMILIES: dict[str, str] = {}  # family -> current valid jti
+
+
+def _redis() -> Any | None:
+    """Return a Redis client if Redis is reachable, else None."""
     try:
-        # Decode without verification just to read type claim
-        claims = jwt.decode(
-            token, _get_secret_key(), algorithms=[ALGORITHM], options={"verify_exp": True}
+        import redis.asyncio as aioredis
+
+        return aioredis.from_url(
+            get_settings().redis.url, decode_responses=True, socket_connect_timeout=2
         )
-        return claims.get("type", "unknown")
-    except JWTError:
-        return "invalid"
+    except Exception:
+        return None
+
+
+def _family_key(family: str) -> str:
+    return f"certmgmt:refresh:{family}"
+
+
+async def rotate_refresh_family(family: str, new_jti: str, ttl_seconds: int) -> str:
+    """Rotate a refresh family: old jti becomes invalid, new jti is current.
+
+    Raises:
+        TokenReuseError: if the family is already revoked (reuse detected).
+    """
+    from certmanager.core.exceptions import TokenReuseError
+
+    client = _redis()
+    if client is not None:
+        try:
+            # GET (existence check) and SET are not atomic here, so use a
+            # small Lua-free approach: watch for a "revoked" marker.
+            current = await client.get(_family_key(family))
+            if current == "REVOKED":
+                raise TokenReuseError("Refresh token family has been revoked")
+            await client.set(_family_key(family), new_jti, ex=ttl_seconds)
+            await client.aclose()
+            return new_jti
+        except TokenReuseError:
+            if client is not None:
+                await client.aclose()
+            raise
+        except Exception:
+            # Fall through to in-memory store
+            pass
+
+    if _IN_MEMORY_FAMILIES.get(family) == "REVOKED":
+        raise TokenReuseError("Refresh token family has been revoked")
+    _IN_MEMORY_FAMILIES[family] = new_jti
+    return new_jti
+
+
+async def verify_refresh_family(family: str, presented_jti: str) -> bool:
+    """Check that the presented jti is the CURRENT token of its family.
+
+    If a previously-rotated (stolen) token is presented, the whole family
+    is revoked and False is returned.
+    """
+    from certmanager.core.exceptions import TokenReuseError
+
+    client = _redis()
+    if client is not None:
+        try:
+            current = await client.get(_family_key(family))
+            await client.aclose()
+            if current == "REVOKED":
+                return False
+            if current is not None and current != presented_jti:
+                # Reuse of an old token — revoke the family
+                await revoke_refresh_family(family)
+                return False
+            return True
+        except Exception:
+            pass
+
+    current = _IN_MEMORY_FAMILIES.get(family)
+    if current == "REVOKED":
+        return False
+    if current is not None and current != presented_jti:
+        await revoke_refresh_family(family)
+        return False
+    return True
+
+
+async def revoke_refresh_family(family: str) -> None:
+    """Revoke an entire refresh token family (logout / reuse detection)."""
+    client = _redis()
+    if client is not None:
+        try:
+            # Keep the REVOKED marker for the remainder of the token TTL
+            ttl = int(get_settings().security.refresh_token_expire_hours * 3600)
+            await client.set(_family_key(family), "REVOKED", ex=ttl)
+            await client.aclose()
+            return
+        except Exception:
+            pass
+
+    _IN_MEMORY_FAMILIES[family] = "REVOKED"

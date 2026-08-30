@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,25 @@ from certmanager.core.models import Role, User, UserRole
 from certmanager.core.security import hash_password
 
 router = APIRouter()
+
+
+class UserCreate(BaseModel):
+    """Body for creating a user. Password travels in the body — never as a
+    query param, which would leak into access logs and audit records."""
+
+    email: str
+    password: str
+    full_name: Optional[str] = None
+    is_superuser: bool = False
+    role_ids: Optional[list[str]] = None
+
+
+class UserUpdate(BaseModel):
+    """Body for updating a user — all fields optional."""
+
+    full_name: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_superuser: Optional[bool] = None
 
 
 @router.get("")
@@ -60,31 +80,27 @@ async def list_users(
 
 @router.post("", status_code=201)
 async def create_user(
-    email: str,
-    password: str,
-    full_name: Optional[str] = None,
-    is_superuser: bool = False,
-    role_ids: Optional[list[str]] = None,
+    body: UserCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_superuser),
 ):
     """Create a new user (admin only)."""
-    existing = await db.execute(select(User).where(User.email == email))
+    existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
-        raise ConflictError(f"User with email '{email}' already exists")
+        raise ConflictError(f"User with email '{body.email}' already exists")
 
     user = User(
-        email=email,
-        password_hash=hash_password(password),
-        full_name=full_name,
-        is_superuser=is_superuser,
+        email=body.email,
+        password_hash=hash_password(body.password),
+        full_name=body.full_name,
+        is_superuser=body.is_superuser,
     )
     db.add(user)
     await db.flush()
 
     # Assign roles
-    if role_ids:
-        for role_id in role_ids:
+    if body.role_ids:
+        for role_id in body.role_ids:
             db.add(UserRole(user_id=user.id, role_id=role_id))
     else:
         # Default: assign "viewer" role
@@ -134,9 +150,7 @@ async def get_user(
 @router.patch("/{user_id}")
 async def update_user(
     user_id: str,
-    full_name: Optional[str] = None,
-    is_active: Optional[bool] = None,
-    is_superuser: Optional[bool] = None,
+    body: UserUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_superuser),
 ):
@@ -146,12 +160,12 @@ async def update_user(
     if not user:
         raise NotFoundError(f"User {user_id} not found")
 
-    if full_name is not None:
-        user.full_name = full_name
-    if is_active is not None:
-        user.is_active = is_active
-    if is_superuser is not None:
-        user.is_superuser = is_superuser
+    if body.full_name is not None:
+        user.full_name = body.full_name
+    if body.is_active is not None:
+        user.is_active = body.is_active
+    if body.is_superuser is not None:
+        user.is_superuser = body.is_superuser
 
     await db.flush()
     return {"data": {"id": user.id, "updated": True}}

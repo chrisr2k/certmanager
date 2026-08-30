@@ -451,46 +451,23 @@ class AWSACMConnector(CAConnector):
     async def revoke_certificate(
         self, source_id: str, reason: str = "unspecified"
     ) -> bool:
-        """Revoke an ACM certificate.
+        """ACM does not support certificate revocation.
 
-        Args:
-            source_id: AWS ARN of the certificate.
-            reason: CRL reason. ACM supports:
-                UNSPECIFIED, KEY_COMPROMISE, CA_COMPROMISE,
-                AFFILIATION_CHANGED, SUPERSEDED, CESSATION_OF_OPERATION
+        AWS Certificate Manager has no revoke API. For ACM-issued
+        certificates the only recourse is removing the certificate from the
+        resources using it (ALBs, CloudFront, etc.); for imported
+        certificates, `delete_certificate` removes it from ACM (it does not
+        revoke the underlying certificate — the issuing CA must do that).
 
-        Returns:
-            True if the revocation request was accepted.
+        This method raises instead of pretending: a previous implementation
+        silently disabled CT logging and reported success, which misled
+        callers into believing a revocation had occurred.
         """
-        region = self.regions[0]
-        try:
-            region = source_id.split(":")[3]
-        except IndexError:
-            pass
-
-        # Map reason to ACM's expected format
-        acm_reason = reason.upper().replace(" ", "_")
-        valid_reasons = {
-            "UNSPECIFIED",
-            "KEY_COMPROMISE",
-            "CA_COMPROMISE",
-            "AFFILIATION_CHANGED",
-            "SUPERSEDED",
-            "CESSATION_OF_OPERATION",
-        }
-        if acm_reason not in valid_reasons:
-            acm_reason = "UNSPECIFIED"
-
-        client = await self._get_acm_client(region)
-        async with client as acm:
-            try:
-                await acm.update_certificate_options(
-                    CertificateArn=source_id,
-                    Options={"CertificateTransparencyLoggingPreference": "DISABLED"},
-                )
-                return True
-            except Exception as e:
-                raise ConnectorError(f"ACM revocation failed: {e}")
+        raise NotImplementedError(
+            "AWS ACM does not support certificate revocation. Remove the "
+            "certificate from all resources using it (and for imported "
+            "certificates, revoke at the issuing CA)."
+        )
 
     async def get_certificate_chain(self, source_id: str) -> List[CertificateRecord]:
         """Get the certificate chain from ACM.

@@ -6,14 +6,33 @@ from datetime import datetime, UTC
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from certmanager.api.dependencies import get_current_active_user, get_db
+from certmanager.connectors.secrets import encrypt_sensitive_values, redact_for_display
 from certmanager.core.exceptions import ConflictError, NotFoundError
 from certmanager.core.models import CertificateAuthority, User
 
 router = APIRouter()
+
+
+class AuthorityCreate(BaseModel):
+    """Body for registering a certificate authority."""
+
+    name: str
+    ca_type: str
+    datacenter_id: Optional[str] = None
+    config: Optional[dict] = None
+
+
+class AuthorityUpdate(BaseModel):
+    """Body for updating a CA — all fields optional."""
+
+    name: Optional[str] = None
+    config: Optional[dict] = None
+    is_active: Optional[bool] = None
 
 
 @router.get("")
@@ -59,10 +78,7 @@ async def list_authorities(
 
 @router.post("", status_code=201)
 async def create_authority(
-    name: str,
-    ca_type: str,
-    datacenter_id: Optional[str] = None,
-    config: dict = None,
+    body: AuthorityCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -70,18 +86,21 @@ async def create_authority(
     # Check for duplicates
     existing = await db.execute(
         select(CertificateAuthority).where(
-            CertificateAuthority.name == name,
-            CertificateAuthority.ca_type == ca_type,
+            CertificateAuthority.name == body.name,
+            CertificateAuthority.ca_type == body.ca_type,
         )
     )
     if existing.scalar_one_or_none():
-        raise ConflictError(f"Authority '{name}' of type '{ca_type}' already exists")
+        raise ConflictError(
+            f"Authority '{body.name}' of type '{body.ca_type}' already exists"
+        )
 
     authority = CertificateAuthority(
-        name=name,
-        ca_type=ca_type,
-        datacenter_id=datacenter_id,
-        config=config or {},
+        name=body.name,
+        ca_type=body.ca_type,
+        datacenter_id=body.datacenter_id,
+        # Credential values are encrypted before they touch the database
+        config=encrypt_sensitive_values(body.config or {}),
     )
     db.add(authority)
     await db.flush()
@@ -111,7 +130,8 @@ async def get_authority(
             "ca_type": authority.ca_type,
             "datacenter_id": authority.datacenter_id,
             "is_active": authority.is_active,
-            "config": authority.config,
+            # Never return credential values in API responses
+            "config": redact_for_display(authority.config or {}),
             "health_status": authority.health_status,
             "last_scan_at": authority.last_scan_at.isoformat() if authority.last_scan_at else None,
             "last_scan_status": authority.last_scan_status,
@@ -123,9 +143,7 @@ async def get_authority(
 @router.patch("/{authority_id}")
 async def update_authority(
     authority_id: str,
-    name: Optional[str] = None,
-    config: Optional[dict] = None,
-    is_active: Optional[bool] = None,
+    body: AuthorityUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -137,12 +155,13 @@ async def update_authority(
     if not authority:
         raise NotFoundError(f"Authority {authority_id} not found")
 
-    if name is not None:
-        authority.name = name
-    if config is not None:
-        authority.config = config
-    if is_active is not None:
-        authority.is_active = is_active
+    if body.name is not None:
+        authority.name = body.name
+    if body.config is not None:
+        # Encrypt any new credential values before storing
+        authority.config = encrypt_sensitive_values(body.config)
+    if body.is_active is not None:
+        authority.is_active = body.is_active
 
     await db.flush()
     return {"data": {"id": authority.id, "updated": True}}

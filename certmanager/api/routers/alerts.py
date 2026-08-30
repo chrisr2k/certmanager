@@ -6,6 +6,7 @@ from datetime import datetime, UTC
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,40 @@ from certmanager.core.exceptions import NotFoundError
 from certmanager.core.models import AlertEvent, AlertRule, AlertRuleChannel, NotificationChannel, User
 
 router = APIRouter()
+
+
+class AlertRuleCreate(BaseModel):
+    """Body for creating an alert rule."""
+
+    name: str
+    condition_type: str
+    condition_config: dict
+    severity: str = "warning"
+    description: Optional[str] = None
+    scope_filter: Optional[dict] = None
+    cooldown_minutes: int = 60
+    is_enabled: bool = True
+    channel_ids: Optional[list[str]] = None
+
+
+class AlertRuleUpdate(BaseModel):
+    """Body for updating an alert rule — all fields optional."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_enabled: Optional[bool] = None
+    condition_config: Optional[dict] = None
+    severity: Optional[str] = None
+    cooldown_minutes: Optional[int] = None
+    scope_filter: Optional[dict] = None
+
+
+class ChannelCreate(BaseModel):
+    """Body for creating a notification channel."""
+
+    name: str
+    channel_type: str
+    config: dict = Field(default_factory=dict)
 
 
 # --- Alert Rules ---
@@ -57,34 +92,28 @@ async def list_alert_rules(
 
 @router.post("/rules", status_code=201)
 async def create_alert_rule(
-    name: str,
-    condition_type: str,
-    condition_config: dict,
-    severity: str = "warning",
-    description: Optional[str] = None,
-    scope_filter: Optional[dict] = None,
-    cooldown_minutes: int = 60,
-    channel_ids: Optional[list[str]] = None,
+    body: AlertRuleCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Create a new alert rule with optional notification channels."""
     rule = AlertRule(
-        name=name,
-        description=description,
-        condition_type=condition_type,
-        condition_config=condition_config,
-        severity=severity,
-        scope_filter=scope_filter or {},
-        cooldown_minutes=cooldown_minutes,
+        name=body.name,
+        description=body.description,
+        condition_type=body.condition_type,
+        condition_config=body.condition_config,
+        severity=body.severity,
+        scope_filter=body.scope_filter or {},
+        cooldown_minutes=body.cooldown_minutes,
+        is_enabled=body.is_enabled,
         created_by=current_user.id,
     )
     db.add(rule)
     await db.flush()
 
     # Attach notification channels if specified
-    if channel_ids:
-        for ch_id in channel_ids:
+    if body.channel_ids:
+        for ch_id in body.channel_ids:
             ch = AlertRuleChannel(
                 alert_rule_id=rule.id,
                 channel_type="notification_channel",  # will need to resolve from channel
@@ -100,10 +129,7 @@ async def create_alert_rule(
 @router.patch("/rules/{rule_id}")
 async def update_alert_rule(
     rule_id: str,
-    name: Optional[str] = None,
-    is_enabled: Optional[bool] = None,
-    condition_config: Optional[dict] = None,
-    severity: Optional[str] = None,
+    body: AlertRuleUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -113,14 +139,18 @@ async def update_alert_rule(
     if not rule:
         raise NotFoundError(f"Alert rule {rule_id} not found")
 
-    if name is not None:
-        rule.name = name
-    if is_enabled is not None:
-        rule.is_enabled = is_enabled
-    if condition_config is not None:
-        rule.condition_config = condition_config
-    if severity is not None:
-        rule.severity = severity
+    for field in (
+        "name",
+        "description",
+        "is_enabled",
+        "condition_config",
+        "severity",
+        "cooldown_minutes",
+        "scope_filter",
+    ):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(rule, field, value)
 
     await db.flush()
     return {"data": {"id": rule.id, "updated": True}}
@@ -246,17 +276,15 @@ async def list_channels(
 
 @router.post("/channels", status_code=201)
 async def create_channel(
-    name: str,
-    channel_type: str,
-    config: dict,
+    body: ChannelCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Create a notification channel."""
     channel = NotificationChannel(
-        name=name,
-        channel_type=channel_type,
-        config=config,
+        name=body.name,
+        channel_type=body.channel_type,
+        config=body.config,
     )
     db.add(channel)
     await db.flush()

@@ -1,15 +1,20 @@
-"""Authentication router: login, token refresh, logout, MFA setup/verify."""
+"""Authentication router: login, token refresh, logout, MFA setup/verify/recover."""
 
 from __future__ import annotations
 
+import hashlib
+import secrets
+
 import pyotp
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from certmanager.api.dependencies import get_current_active_user, get_db
 from certmanager.api.schemas.auth import (
     LoginRequest,
+    LogoutRequest,
+    MFARecoveryRequest,
     MFASetupResponse,
     MFAVerifyRequest,
     MFAVerifyResponse,
@@ -17,7 +22,7 @@ from certmanager.api.schemas.auth import (
     TokenResponse,
     UserProfile,
 )
-from certmanager.core.database import get_db
+from certmanager.core.config import get_settings
 from certmanager.core.exceptions import (
     AuthenticationError,
     MFARequiredError,
@@ -28,15 +33,17 @@ from certmanager.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
-    hash_password,
+    revoke_refresh_family,
+    rotate_refresh_family,
     verify_password,
+    verify_refresh_family,
 )
 
 router = APIRouter()
 
-# In production, use Redis for token family blacklisting.
-# For now, use an in-memory set (cleared on restart).
-_revoked_families: set[str] = set()
+# --- MFA pending-secret store (server-side; Redis with in-memory fallback) ---
+_pending_mfa_secrets: dict[str, str] = {}  # user_id -> TOTP secret (dev fallback)
+MFA_PENDING_TTL_SECONDS = 600  # 10 minutes to complete setup
 
 
 def _build_profile(user: User) -> UserProfile:
@@ -56,6 +63,73 @@ def _build_profile(user: User) -> UserProfile:
         roles=role_names,
         permissions=sorted(set(permissions)),
     )
+
+
+def _token_ttl_seconds() -> int:
+    return get_settings().security.access_token_expire_minutes * 60
+
+
+def _extra_claims(user: User) -> dict:
+    role_names = [role.name for role in user.roles]
+    perm_strings = []
+    for role in user.roles:
+        for perm in role.permissions:
+            perm_strings.append(f"{perm.resource}:{perm.action}")
+    return {
+        "email": user.email,
+        "roles": role_names,
+        "permissions": sorted(set(perm_strings)),
+        "is_superuser": user.is_superuser,
+    }
+
+
+async def _store_pending_mfa_secret(user_id: str, secret: str) -> None:
+    try:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(
+            get_settings().redis.url, decode_responses=True, socket_connect_timeout=2
+        )
+        await client.set(f"certmgmt:mfa_pending:{user_id}", secret, ex=MFA_PENDING_TTL_SECONDS)
+        await client.aclose()
+        return
+    except Exception:
+        pass
+    _pending_mfa_secrets[user_id] = secret
+
+
+async def _get_pending_mfa_secret(user_id: str) -> str | None:
+    try:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(
+            get_settings().redis.url, decode_responses=True, socket_connect_timeout=2
+        )
+        secret = await client.get(f"certmgmt:mfa_pending:{user_id}")
+        await client.aclose()
+        if secret:
+            return secret
+    except Exception:
+        pass
+    return _pending_mfa_secrets.get(user_id)
+
+
+async def _clear_pending_mfa_secret(user_id: str) -> None:
+    try:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(
+            get_settings().redis.url, decode_responses=True, socket_connect_timeout=2
+        )
+        await client.delete(f"certmgmt:mfa_pending:{user_id}")
+        await client.aclose()
+    except Exception:
+        pass
+    _pending_mfa_secrets.pop(user_id, None)
+
+
+def _hash_recovery_code(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -81,27 +155,20 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
         if not pyotp.TOTP(user.mfa_secret).verify(request.mfa_code):
             raise AuthenticationError("Invalid MFA code")
 
-    # Build claims
-    role_names = [role.name for role in user.roles]
-    perm_strings = []
-    for role in user.roles:
-        for perm in role.permissions:
-            perm_strings.append(f"{perm.resource}:{perm.action}")
-
-    extra_claims = {
-        "email": user.email,
-        "roles": role_names,
-        "permissions": sorted(set(perm_strings)),
-        "is_superuser": user.is_superuser,
-    }
-
-    access_token = create_access_token(subject=user.id, extra_claims=extra_claims)
+    access_token = create_access_token(subject=user.id, extra_claims=_extra_claims(user))
     refresh_token, family = create_refresh_token(subject=user.id)
+
+    # Register the family as current (first refresh token of the family)
+    await rotate_refresh_family(
+        family,
+        decode_token(refresh_token)["jti"],
+        ttl_seconds=get_settings().security.refresh_token_expire_hours * 3600,
+    )
 
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        expires_in=900,  # 15 minutes in seconds
+        expires_in=_token_ttl_seconds(),
     )
 
 
@@ -122,7 +189,13 @@ async def refresh(request: RefreshRequest, db: AsyncSession = Depends(get_db)):
         raise AuthenticationError("Not a refresh token")
 
     token_family = payload.get("family")
-    if token_family and token_family in _revoked_families:
+    presented_jti = payload.get("jti")
+    if not token_family or not presented_jti:
+        raise AuthenticationError("Malformed refresh token")
+
+    # Reuse detection: only the CURRENT token of the family is accepted.
+    # Presenting a rotated-out token revokes the entire family.
+    if not await verify_refresh_family(token_family, presented_jti):
         raise TokenReuseError("Token family has been revoked — possible token theft")
 
     user_id = payload.get("sub")
@@ -133,48 +206,39 @@ async def refresh(request: RefreshRequest, db: AsyncSession = Depends(get_db)):
     if not user or not user.is_active:
         raise AuthenticationError("User not found or deactivated")
 
-    # Build fresh claims
-    role_names = [role.name for role in user.roles]
-    perm_strings = []
-    for role in user.roles:
-        for perm in role.permissions:
-            perm_strings.append(f"{perm.resource}:{perm.action}")
-
-    extra_claims = {
-        "email": user.email,
-        "roles": role_names,
-        "permissions": sorted(set(perm_strings)),
-        "is_superuser": user.is_superuser,
-    }
-
     # Rotate: create new tokens within the same family
-    new_access = create_access_token(subject=user.id, extra_claims=extra_claims)
+    new_access = create_access_token(subject=user.id, extra_claims=_extra_claims(user))
     new_refresh, _ = create_refresh_token(subject=user.id, token_family=token_family)
+    new_jti = decode_token(new_refresh)["jti"]
+    await rotate_refresh_family(
+        token_family,
+        new_jti,
+        ttl_seconds=get_settings().security.refresh_token_expire_hours * 3600,
+    )
 
     return TokenResponse(
         access_token=new_access,
         refresh_token=new_refresh,
-        expires_in=900,
+        expires_in=_token_ttl_seconds(),
     )
 
 
 @router.post("/logout")
 async def logout(
-    request: Request,
+    request: LogoutRequest,
     current_user: User = Depends(get_current_active_user),
 ):
     """Logout: revoke the current refresh token family.
 
-    The client should discard its tokens. The refresh token family
-    is added to the revocation list.
+    The client should discard its tokens. If a refresh token is provided,
+    its family is revoked server-side.
     """
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
+    if request.refresh_token:
         try:
-            payload = decode_token(auth_header[7:])
+            payload = decode_token(request.refresh_token)
             family = payload.get("family")
             if family:
-                _revoked_families.add(family)
+                await revoke_refresh_family(family)
         except Exception:
             pass
 
@@ -191,14 +255,14 @@ async def get_profile(current_user: User = Depends(get_current_active_user)):
 async def mfa_setup(current_user: User = Depends(get_current_active_user)):
     """Initialize MFA setup. Returns a TOTP secret and QR code URI.
 
-    The user must verify with a code before MFA is enabled.
+    The secret is held SERVER-SIDE until verification succeeds — it is not
+    written to the user row, so a failed setup leaves no half-state.
     """
     if current_user.mfa_enabled:
         raise AuthenticationError("MFA is already enabled. Disable it first.")
 
     secret = pyotp.random_base32()
-    # Store secret temporarily — only activated after verification
-    current_user.mfa_secret = secret
+    await _store_pending_mfa_secret(current_user.id, secret)
 
     otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(
         name=current_user.email, issuer_name="CertManager"
@@ -212,27 +276,60 @@ async def mfa_verify(
     request: MFAVerifyRequest,
     current_user: User = Depends(get_current_active_user),
 ):
-    """Verify MFA setup with a TOTP code. Enables MFA on success."""
+    """Verify MFA setup with a TOTP code. Enables MFA on success.
+
+    The TOTP secret is read from the server-side pending store — the client
+    cannot choose its own secret (prevents session-hijack TOTP injection).
+    """
     if current_user.mfa_enabled:
         raise AuthenticationError("MFA is already enabled")
 
-    totp = pyotp.TOTP(request.secret)
+    pending_secret = await _get_pending_mfa_secret(current_user.id)
+    if not pending_secret:
+        raise AuthenticationError("No pending MFA setup — run /auth/mfa/setup first")
+
+    totp = pyotp.TOTP(pending_secret)
     if not totp.verify(request.code):
         raise AuthenticationError("Invalid verification code")
 
-    current_user.mfa_secret = request.secret
+    current_user.mfa_secret = pending_secret
     current_user.mfa_enabled = True
+    await _clear_pending_mfa_secret(current_user.id)
 
-    # Generate recovery codes (8 random codes)
-    import secrets
-    import hashlib
-
+    # Generate recovery codes (8 one-time codes) — only HASHES are stored
     recovery_codes = [
         f"{secrets.token_hex(4)}-{secrets.token_hex(4)}" for _ in range(8)
     ]
+    current_user.recovery_codes = [_hash_recovery_code(c) for c in recovery_codes]
 
     return MFAVerifyResponse(
         success=True,
         message="MFA has been enabled for your account.",
         recovery_codes=recovery_codes,
     )
+
+
+@router.post("/mfa/recover")
+async def mfa_recover(request: MFARecoveryRequest, db: AsyncSession = Depends(get_db)):
+    """Recover an account locked out of MFA using a one-time recovery code.
+
+    Consumes the code (single use) and disables MFA.
+    """
+    result = await db.execute(select(User).where(User.email == request.email))
+    user = result.scalar_one_or_none()
+
+    # Constant-ish response: don't reveal whether the account exists
+    if user is None or not user.mfa_enabled:
+        raise AuthenticationError("Invalid recovery code")
+
+    code_hash = _hash_recovery_code(request.recovery_code)
+    if code_hash not in (user.recovery_codes or []):
+        raise AuthenticationError("Invalid recovery code")
+
+    # Consume the code and disable MFA
+    user.recovery_codes = [h for h in user.recovery_codes if h != code_hash]
+    user.mfa_enabled = False
+    user.mfa_secret = None
+    await db.flush()
+
+    return {"message": "MFA has been disabled. Log in and set up MFA again."}

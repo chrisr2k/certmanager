@@ -29,7 +29,10 @@ def get_connector(
         ConnectorConfigError: If the CA type is unknown or config is invalid.
     """
     ca_type = authority.ca_type
-    config = authority.config or {}
+    # Decrypt any credential values stored in the config JSONB
+    from certmanager.connectors.secrets import decrypt_sensitive_values
+
+    config = decrypt_sensitive_values(authority.config or {})
 
     if ca_type == "aws_acm":
         return _create_aws_connector(config, authority.name, credential_store)

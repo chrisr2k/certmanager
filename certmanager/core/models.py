@@ -80,6 +80,9 @@ class User(Base, TimestampMixin):
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     mfa_secret: Mapped[Optional[str]] = mapped_column(String(64))
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    recovery_codes: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, nullable=False
+    )  # hashes of one-time MFA recovery codes
 
     # Relationships
     roles: Mapped[list["Role"]] = relationship(

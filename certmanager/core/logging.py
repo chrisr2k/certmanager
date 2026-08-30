@@ -7,11 +7,50 @@ colored console output in development.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 
 import structlog
 
 from certmanager.core.config import get_settings
+
+# Field names that may carry secrets — their values are scrubbed entirely
+_SENSITIVE_FIELD_NAMES = {
+    "password",
+    "psk",
+    "secret",
+    "token",
+    "api_key",
+    "client_secret",
+    "access_key",
+    "secret_access_key",
+    "authorization",
+    "mfa_code",
+    "recovery_code",
+}
+
+# Key=value-ish secret patterns that could appear inside message strings
+_SECRET_VALUE_PATTERNS = [
+    re.compile(r"(password|passwd|psk|secret|token|api_key|authorization)(=|:)\s*\S+", re.IGNORECASE),
+    re.compile(r"Bearer\s+\S+", re.IGNORECASE),
+]
+
+
+def _redact(text: str) -> str:
+    """Scrub secret-looking patterns from a rendered string."""
+    for pattern in _SECRET_VALUE_PATTERNS:
+        text = pattern.sub(lambda m: f"{m.group(1)}=[REDACTED]" if m.lastindex else "[REDACTED]", text)
+    return text
+
+
+def _redact_processor(logger, method_name, event_dict):
+    """Structlog processor: strip sensitive fields from every log entry."""
+    for key, value in list(event_dict.items()):
+        if key.lower() in _SENSITIVE_FIELD_NAMES:
+            event_dict[key] = "[REDACTED]"
+        elif isinstance(value, str):
+            event_dict[key] = _redact(value)
+    return event_dict
 
 
 def configure_logging() -> None:
@@ -30,6 +69,7 @@ def configure_logging() -> None:
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
+        _redact_processor,
         structlog.dev.ConsoleRenderer()
         if not is_json
         else structlog.processors.JSONRenderer(),
@@ -62,6 +102,7 @@ def configure_logging() -> None:
         ],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            _redact_processor,
             structlog.dev.ConsoleRenderer() if not is_json else structlog.processors.JSONRenderer(),
         ],
     )

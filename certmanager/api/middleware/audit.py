@@ -24,15 +24,38 @@ logger = structlog.get_logger()
 # Paths to skip auditing
 AUDIT_SKIP_PATHS = {"/api/health", "/api/docs", "/api/redoc", "/api/openapi.json"}
 
-# Maximum body length to capture for audit details
-MAX_AUDIT_BODY_LENGTH = 4096
+# Query parameter names whose values must never be written to the audit log
+SENSITIVE_QUERY_PARAMS = {
+    "password",
+    "psk",
+    "token",
+    "api_key",
+    "secret",
+    "mfa_code",
+    "code",
+    "recovery_code",
+    "refresh_token",
+}
+
+
+def _redacted_query_string(request: Request) -> str:
+    """Serialize query params with sensitive values replaced."""
+    parts = []
+    for key, value in request.query_params.multi_items():
+        if key.lower() in SENSITIVE_QUERY_PARAMS:
+            parts.append(f"{key}=[REDACTED]")
+        else:
+            parts.append(f"{key}={value}")
+    return "&".join(parts)
 
 
 class AuditLogMiddleware(BaseHTTPMiddleware):
     """Logs API requests to the audit trail.
 
     Attaches actor information from request.state (set by RBACMiddleware)
-    and request/response metadata.
+    and request/response metadata. Request bodies are deliberately NOT
+    captured — credentials travel in bodies and must never hit the audit
+    trail; sensitive query params are redacted.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
@@ -42,19 +65,6 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         start_time = datetime.now(UTC)
-
-        # Extract request body for audit (truncated)
-        body_preview = None
-        if request.method in ("POST", "PUT", "PATCH"):
-            try:
-                body_bytes = await request.body()
-                if body_bytes:
-                    body_text = body_bytes.decode("utf-8", errors="replace")
-                    body_preview = body_text[:MAX_AUDIT_BODY_LENGTH]
-                # Reconstruct request so route can read body
-                request._body = body_bytes
-            except Exception:
-                pass
 
         # Process the request
         response = await call_next(request)
@@ -75,7 +85,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
             "details": {
                 "method": request.method,
                 "path": path,
-                "query_string": str(request.query_params),
+                "query_string": _redacted_query_string(request),
                 "status_code": response.status_code,
                 "latency_ms": int((datetime.now(UTC) - start_time).total_seconds() * 1000),
             },
