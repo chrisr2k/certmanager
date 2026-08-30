@@ -65,3 +65,4 @@ agent_data/
 *.tmp
 *.log
 tmp/
+agent_config*.json
