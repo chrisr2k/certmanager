@@ -84,47 +84,43 @@ def _extra_claims(user: User) -> dict:
 
 
 async def _store_pending_mfa_secret(user_id: str, secret: str) -> None:
-    try:
-        import redis.asyncio as aioredis
+    from certmanager.core.redis_client import get_redis
 
-        client = aioredis.from_url(
-            get_settings().redis.url, decode_responses=True, socket_connect_timeout=2
-        )
-        await client.set(f"certmgmt:mfa_pending:{user_id}", secret, ex=MFA_PENDING_TTL_SECONDS)
-        await client.aclose()
-        return
-    except Exception:
-        pass
+    client = await get_redis()
+    if client is not None:
+        try:
+            await client.set(
+                f"certmgmt:mfa_pending:{user_id}", secret, ex=MFA_PENDING_TTL_SECONDS
+            )
+            return
+        except Exception:
+            pass
     _pending_mfa_secrets[user_id] = secret
 
 
 async def _get_pending_mfa_secret(user_id: str) -> str | None:
-    try:
-        import redis.asyncio as aioredis
+    from certmanager.core.redis_client import get_redis
 
-        client = aioredis.from_url(
-            get_settings().redis.url, decode_responses=True, socket_connect_timeout=2
-        )
-        secret = await client.get(f"certmgmt:mfa_pending:{user_id}")
-        await client.aclose()
-        if secret:
-            return secret
-    except Exception:
-        pass
+    client = await get_redis()
+    if client is not None:
+        try:
+            secret = await client.get(f"certmgmt:mfa_pending:{user_id}")
+            if secret:
+                return secret
+        except Exception:
+            pass
     return _pending_mfa_secrets.get(user_id)
 
 
 async def _clear_pending_mfa_secret(user_id: str) -> None:
-    try:
-        import redis.asyncio as aioredis
+    from certmanager.core.redis_client import get_redis
 
-        client = aioredis.from_url(
-            get_settings().redis.url, decode_responses=True, socket_connect_timeout=2
-        )
-        await client.delete(f"certmgmt:mfa_pending:{user_id}")
-        await client.aclose()
-    except Exception:
-        pass
+    client = await get_redis()
+    if client is not None:
+        try:
+            await client.delete(f"certmgmt:mfa_pending:{user_id}")
+        except Exception:
+            pass
     _pending_mfa_secrets.pop(user_id, None)
 
 

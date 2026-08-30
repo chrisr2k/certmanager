@@ -42,10 +42,7 @@ seed:  ## Seed RBAC roles and admin user
 # ---- Testing ----
 
 test:  ## Run test suite
-	pytest -v --cov=certmanager --cov-report=term-missing
-
-test-watch:  ## Run tests on file changes
-	ptw -- --testmon
+	pytest -v
 
 lint:  ## Run linters
 	ruff check certmanager/

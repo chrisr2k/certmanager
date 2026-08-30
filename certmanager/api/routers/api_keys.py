@@ -6,6 +6,7 @@ import hashlib
 import secrets
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,13 @@ from certmanager.core.exceptions import NotFoundError
 from certmanager.core.models import APIKey, User
 
 router = APIRouter()
+
+
+class APIKeyCreate(BaseModel):
+    """Body for creating an API key."""
+
+    name: str
+    scopes: list[str] = ["*"]
 
 
 @router.get("")
@@ -45,8 +53,7 @@ async def list_api_keys(
 
 @router.post("", status_code=201)
 async def create_api_key(
-    name: str,
-    scopes: list[str] = None,
+    body: APIKeyCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -56,15 +63,12 @@ async def create_api_key(
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
     prefix = raw_key[:12]  # "cm_xxxxxxxx"
 
-    if scopes is None:
-        scopes = ["read"]
-
     api_key = APIKey(
         user_id=current_user.id,
-        name=name,
+        name=body.name,
         key_hash=key_hash,
         prefix=prefix,
-        scopes=scopes,
+        scopes=body.scopes or ["*"],
     )
     db.add(api_key)
     await db.flush()
@@ -74,7 +78,7 @@ async def create_api_key(
             "id": api_key.id,
             "name": api_key.name,
             "prefix": prefix,
-            "scopes": scopes,
+            "scopes": api_key.scopes,
             "api_key": raw_key,  # Returned ONCE
             "message": "Store this API key securely. It will not be shown again.",
         }

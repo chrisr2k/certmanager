@@ -218,7 +218,8 @@ async def agent_heartbeat(
     pending = await db.execute(
         select(ScanJob).where(
             ScanJob.status == "pending",
-            ScanJob.scope_config.contains({"agent_id": agent_id}),
+            # Portable JSON path lookup (->> on PG, json_extract on SQLite)
+            ScanJob.scope_config["agent_id"].as_string() == agent_id,
         )
     )
     pending_count = len(pending.scalars().all())
@@ -241,7 +242,8 @@ async def fetch_agent_jobs(
         select(ScanJob)
         .where(
             ScanJob.status == "pending",
-            ScanJob.scope_config.contains({"agent_id": agent_id}),
+            # Portable JSON path lookup (->> on PG, json_extract on SQLite)
+            ScanJob.scope_config["agent_id"].as_string() == agent_id,
         )
         .limit(5)
     )

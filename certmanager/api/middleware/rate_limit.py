@@ -44,6 +44,7 @@ MAX_IN_MEMORY_CLIENTS = 10_000
 def _get_category(path: str, method: str) -> str:
     """Determine the rate limit category for a request."""
     for prefix, category in PATH_CATEGORIES:
+        prefix = prefix.rstrip("/")
         if path == prefix or path.startswith(prefix + "/"):
             return category
     if method == "GET":
@@ -62,22 +63,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app, *args, **kwargs)
         # In-memory fallback: {ip_or_user: {category: [(timestamp,)]}}
         self._in_memory: dict = defaultdict(lambda: defaultdict(list))
-        self._redis_client: Optional[object] = None
-
-    def _get_redis(self):
-        """Get (or lazily create) a shared Redis client."""
-        if self._redis_client is None:
-            try:
-                from certmanager.core.config import get_settings
-
-                import redis.asyncio as aioredis
-
-                self._redis_client = aioredis.from_url(
-                    get_settings().redis.url, decode_responses=True
-                )
-            except Exception:
-                self._redis_client = False  # marker: creation failed
-        return self._redis_client or None
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
@@ -128,7 +113,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             True if allowed, False if over the limit, None if Redis is
             unreachable (caller falls back to the in-memory store).
         """
-        r = self._get_redis()
+        from certmanager.core.redis_client import get_redis
+
+        r = await get_redis()
         if r is None:
             return None
         try:

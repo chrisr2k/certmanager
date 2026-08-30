@@ -26,12 +26,15 @@ async def get_current_user(
 ) -> User:
     """Dependency: extract and validate the current user from the request state.
 
-    The RBAC middleware has already validated the JWT and set request.state.
-    This dependency fetches the full User ORM object.
+    The RBAC middleware has already validated the JWT (or X-API-Key) and set
+    request.state. This dependency fetches the full User ORM object. API-key
+    requests resolve to their owning user (scopes are enforced by the RBAC
+    middleware before the router runs).
     """
     user_id = getattr(request.state, "actor_id", None)
+    actor_type = getattr(request.state, "actor_type", None)
 
-    if not user_id or getattr(request.state, "actor_type", None) != "user":
+    if not user_id or actor_type not in ("user", "api_key"):
         raise AuthenticationError("Authentication required")
 
     result = await db.execute(select(User).where(User.id == user_id))

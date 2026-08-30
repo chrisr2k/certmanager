@@ -22,6 +22,13 @@ from certmanager.core.models import Certificate, CertificateChain
 logger = structlog.get_logger()
 
 
+def _as_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize a DB-loaded datetime to timezone-aware (SQLite drops tzinfo)."""
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 class CertificateService:
     """Manages the canonical certificate inventory.
 
@@ -157,7 +164,8 @@ class CertificateService:
             # Existing certificate — update last_seen and merge metadata
             changed = False
 
-            if existing.last_seen_at < now:
+            existing_last_seen = _as_aware(existing.last_seen_at)
+            if existing_last_seen is None or existing_last_seen < now:
                 existing.last_seen_at = now
                 changed = True
 
@@ -185,7 +193,7 @@ class CertificateService:
             if record.issuer != existing.issuer:
                 existing.issuer = record.issuer
                 changed = True
-            if record.not_after != existing.not_after:
+            if record.not_after != _as_aware(existing.not_after):
                 existing.not_after = record.not_after
                 existing.validity_days = record.validity_days or int(
                     (record.not_after - record.not_before).total_seconds() / 86400

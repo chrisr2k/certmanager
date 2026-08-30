@@ -31,14 +31,18 @@ from certmanager.core.security import decode_token
 
 logger = structlog.get_logger()
 
-# Paths that do not require authentication. Matching is segment-aware
-# ("prefix/" form) so /api/v1/auth never matches /api/v1/authorities.
+# Paths that do not require authentication. Only the EXACT unauthenticated
+# endpoints are listed — never the whole /api/v1/auth prefix, which would
+# wrongly expose /auth/me, /auth/logout, and MFA setup to anonymous callers
+# (and would also have matched /api/v1/authorities with naive prefix logic).
 PUBLIC_PATH_PREFIXES: Set[str] = {
     "/api/health",
     "/api/docs",
     "/api/redoc",
     "/api/openapi.json",
-    "/api/v1/auth",
+    "/api/v1/auth/login",
+    "/api/v1/auth/refresh",
+    "/api/v1/auth/mfa/recover",
     "/api/v1/agents/register",  # Only registration is public (uses PSK)
 }
 

@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Any, List, Optional
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -30,8 +31,20 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# Type variants: JSONB on PostgreSQL, plain JSON elsewhere (SQLite in tests).
+# This keeps a single model layer while the migration stays PG-native.
+JSONVariant = JSON().with_variant(JSONB, "postgresql")
+ARRAYVariant = JSON().with_variant(ARRAY(Text), "postgresql")
+# UUID: native UUID on PG; plain 32-char hex strings on SQLite (no UUID
+# object conversion, so values round-trip exactly as Python writes them).
+UUIDHex = postgresql.UUID(as_uuid=False).with_variant(String(32), "sqlite")
+# Big autoincrement PK: BIGSERIAL on PG; SQLite only autoincrements plain
+# INTEGER PRIMARY KEY, so the variant switches type per dialect.
+BigIntPK = BigInteger().with_variant(Integer, "sqlite")
 
 
 # ---------------------------------------------------------------------------
@@ -41,9 +54,9 @@ class Base(DeclarativeBase):
     """Base class for all ORM models."""
 
     type_annotation_map = {
-        dict[str, Any]: JSONB,
-        list[str]: ARRAY(String),
-        list[dict]: JSONB,
+        dict[str, Any]: JSONVariant,
+        list[str]: ARRAYVariant,
+        list[dict]: JSONVariant,
     }
 
 
@@ -72,7 +85,7 @@ def _new_uuid() -> str:
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255))
@@ -81,7 +94,7 @@ class User(Base, TimestampMixin):
     mfa_secret: Mapped[Optional[str]] = mapped_column(String(64))
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     recovery_codes: Mapped[list[str]] = mapped_column(
-        JSONB, default=list, nullable=False
+        JSONVariant, default=list, nullable=False
     )  # hashes of one-time MFA recovery codes
 
     # Relationships
@@ -97,7 +110,7 @@ class User(Base, TimestampMixin):
 class Role(Base, TimestampMixin):
     __tablename__ = "roles"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
 
@@ -113,7 +126,7 @@ class Role(Base, TimestampMixin):
 class Permission(Base):
     __tablename__ = "permissions"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     resource: Mapped[str] = mapped_column(String(100), nullable=False)
     action: Mapped[str] = mapped_column(String(50), nullable=False)
 
@@ -129,10 +142,10 @@ class UserRole(Base):
     __tablename__ = "user_roles"
 
     user_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+        UUIDHex, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     role_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True
+        UUIDHex, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True
     )
 
 
@@ -140,10 +153,10 @@ class RolePermission(Base):
     __tablename__ = "role_permissions"
 
     role_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True
+        UUIDHex, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True
     )
     permission_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True
+        UUIDHex, ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True
     )
 
 
@@ -153,13 +166,13 @@ class RolePermission(Base):
 class Datacenter(Base, TimestampMixin):
     __tablename__ = "datacenters"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     code: Mapped[str] = mapped_column(String(10), unique=True, nullable=False)
     location: Mapped[Optional[str]] = mapped_column(String(255))
     timezone: Mapped[str] = mapped_column(String(50), default="UTC", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    metadata_: Mapped[dict] = mapped_column("metadata_json", JSONB, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata_json", JSONVariant, default=dict)
 
     # Relationships
     certificate_authorities: Mapped[list["CertificateAuthority"]] = relationship(
@@ -172,13 +185,13 @@ class Datacenter(Base, TimestampMixin):
 class CertificateAuthority(Base, TimestampMixin):
     __tablename__ = "certificate_authorities"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     ca_type: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # aws_acm | azure_keyvault | adcs
     datacenter_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("datacenters.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("datacenters.id", ondelete="SET NULL")
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -186,7 +199,7 @@ class CertificateAuthority(Base, TimestampMixin):
     # AWS: {"account_id": "...", "regions": ["us-east-1"], "role_arn": "..."}
     # Azure: {"subscription_id": "...", "vault_url": "...", "tenant_id": "..."}
     # ADCS: {"agent_id": "...", "ca_server": "...", "ca_name": "..."}
-    config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    config: Mapped[dict] = mapped_column(JSONVariant, default=dict, nullable=False)
 
     # Reference to encrypted credentials in ca_credentials table
     credential_ref: Mapped[Optional[str]] = mapped_column(String(255))
@@ -209,7 +222,7 @@ class CertificateAuthority(Base, TimestampMixin):
 class CACredential(Base):
     __tablename__ = "ca_credentials"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     lookup_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     encrypted_value: Mapped[bytes] = mapped_column(
         LargeBinary, nullable=False
@@ -234,7 +247,7 @@ class Certificate(Base, TimestampMixin):
 
     __tablename__ = "certificates"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
 
     # Identity
     common_name: Mapped[Optional[str]] = mapped_column(String(500))
@@ -254,16 +267,16 @@ class Certificate(Base, TimestampMixin):
     signature_algorithm: Mapped[Optional[str]] = mapped_column(String(50))
 
     # Subject Alternative Names
-    sans: Mapped[Optional[list[str]]] = mapped_column(ARRAY(Text))
+    sans: Mapped[Optional[list[str]]] = mapped_column(ARRAYVariant)
 
     # Source
     source_ca_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("certificate_authorities.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("certificate_authorities.id", ondelete="SET NULL")
     )
     source_type: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # aws_acm | azure_keyvault | adcs | manual | tls_scan
-    source_detail: Mapped[dict] = mapped_column(JSONB, default=dict)
+    source_detail: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     # {"aws_arn": "...", "azure_vault_url": "...", "adcs_template": "..."}
 
     # Status
@@ -273,10 +286,10 @@ class Certificate(Base, TimestampMixin):
 
     # Association
     datacenter_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("datacenters.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("datacenters.id", ondelete="SET NULL")
     )
     owner: Mapped[Optional[str]] = mapped_column(String(255))
-    tags: Mapped[dict] = mapped_column(JSONB, default=dict)
+    tags: Mapped[dict] = mapped_column(JSONVariant, default=dict)
 
     # Discovery tracking
     first_seen_at: Mapped[datetime] = mapped_column(
@@ -304,15 +317,9 @@ class Certificate(Base, TimestampMixin):
         Index("idx_certificates_thumbprint", "thumbprint_sha256"),
         Index("idx_certificates_ca", "source_ca_id"),
         Index("idx_certificates_dc", "datacenter_id"),
-        Index(
-            "idx_certificates_search",
-            text(
-                "GIN (to_tsvector('english', "
-                "coalesce(common_name,'') || ' ' || "
-                "coalesce(subject,'') || ' ' || "
-                "coalesce(issuer,'')))"
-            ),
-        ),
+        # NOTE: the PostgreSQL tsvector GIN search index
+        # (idx_certificates_search) is created in migration 0001 only —
+        # it cannot be expressed portably across dialects.
         Index("idx_certificates_sans", "sans", postgresql_using="GIN"),
         Index("idx_certificates_type_status", "cert_type", "status"),
     )
@@ -323,9 +330,9 @@ class CertificateChain(Base):
 
     __tablename__ = "certificate_chains"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     leaf_cert_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("certificates.id", ondelete="CASCADE")
+        UUIDHex, ForeignKey("certificates.id", ondelete="CASCADE")
     )
     chain_order: Mapped[int] = mapped_column(Integer, nullable=False)  # 0 = leaf, 1..N = intermediates, N+1 = root
     cert_pem_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -348,19 +355,19 @@ class CertificateChain(Base):
 class CTLogEntry(Base):
     __tablename__ = "ct_log_entries"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     log_name: Mapped[Optional[str]] = mapped_column(String(255))
     log_url: Mapped[Optional[str]] = mapped_column(Text)
     entry_index: Mapped[Optional[int]] = mapped_column(BigInteger)
     logged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     cert_thumbprint: Mapped[Optional[str]] = mapped_column(String(64))
-    domains: Mapped[Optional[list[str]]] = mapped_column(ARRAY(Text))
+    domains: Mapped[Optional[list[str]]] = mapped_column(ARRAYVariant)
     issuer: Mapped[Optional[str]] = mapped_column(Text)
     not_before: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     not_after: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     is_precert: Mapped[bool] = mapped_column(Boolean, default=False)
     matched_cert_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("certificates.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("certificates.id", ondelete="SET NULL")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
@@ -381,21 +388,21 @@ class CTLogEntry(Base):
 class AlertRule(Base, TimestampMixin):
     __tablename__ = "alert_rules"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     condition_type: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # expiry_days | issuer_match | status_change | ct_new_cert | ca_health
-    condition_config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    scope_filter: Mapped[dict] = mapped_column(JSONB, default=dict)
+    condition_config: Mapped[dict] = mapped_column(JSONVariant, default=dict, nullable=False)
+    scope_filter: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     severity: Mapped[str] = mapped_column(
         String(20), default="warning", nullable=False
     )  # info | warning | critical
     cooldown_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
     created_by: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("users.id", ondelete="SET NULL")
     )
 
     # Relationships
@@ -409,14 +416,14 @@ class AlertRule(Base, TimestampMixin):
 class AlertRuleChannel(Base):
     __tablename__ = "alert_rule_channels"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     alert_rule_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("alert_rules.id", ondelete="CASCADE")
+        UUIDHex, ForeignKey("alert_rules.id", ondelete="CASCADE")
     )
     channel_type: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # email | webhook | slack | teams | pagerduty
-    channel_config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    channel_config: Mapped[dict] = mapped_column(JSONVariant, default=dict, nullable=False)
 
     # Relationships
     alert_rule: Mapped["AlertRule"] = relationship(back_populates="channels")
@@ -425,21 +432,21 @@ class AlertRuleChannel(Base):
 class AlertEvent(Base):
     __tablename__ = "alert_events"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     alert_rule_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("alert_rules.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("alert_rules.id", ondelete="SET NULL")
     )
     cert_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("certificates.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("certificates.id", ondelete="SET NULL")
     )
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     severity: Mapped[str] = mapped_column(String(20), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    context: Mapped[dict] = mapped_column(JSONB, default=dict)
+    context: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     is_acknowledged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     acknowledged_by: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("users.id", ondelete="SET NULL")
     )
     acknowledged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -463,7 +470,7 @@ class AlertEvent(Base):
 class ScanJob(Base):
     __tablename__ = "scan_jobs"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     job_type: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # full_discovery | ca_sync | tls_scan | adcs_scan | ct_monitor
@@ -472,15 +479,15 @@ class ScanJob(Base):
     )  # pending | running | completed | failed | cancelled
     triggered_by: Mapped[str] = mapped_column(String(50), nullable=False)  # schedule | manual | api
     triggered_by_user: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("users.id", ondelete="SET NULL")
     )
-    scope_config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    scope_config: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     correlation_id: Mapped[Optional[str]] = mapped_column(String(100))
     total_checked: Mapped[int] = mapped_column(Integer, default=0)
     total_new: Mapped[int] = mapped_column(Integer, default=0)
     total_updated: Mapped[int] = mapped_column(Integer, default=0)
     total_errors: Mapped[int] = mapped_column(Integer, default=0)
-    error_detail: Mapped[list] = mapped_column(JSONB, default=list)
+    error_detail: Mapped[list] = mapped_column(JSONVariant, default=list)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -494,11 +501,11 @@ class ScanJob(Base):
 class Agent(Base, TimestampMixin):
     __tablename__ = "agents"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False)  # adcs | tls_scanner | generic
     datacenter_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("datacenters.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("datacenters.id", ondelete="SET NULL")
     )
     hostname: Mapped[Optional[str]] = mapped_column(String(255))
     ip_address: Mapped[Optional[str]] = mapped_column(String(45))  # INET field
@@ -509,7 +516,7 @@ class Agent(Base, TimestampMixin):
     )  # online | offline | degraded | unapproved
     last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_job_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    config: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     is_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Relationships
@@ -522,15 +529,15 @@ class Agent(Base, TimestampMixin):
 class AuditLog(Base):
     __tablename__ = "audit_log"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     actor_type: Mapped[str] = mapped_column(String(20), nullable=False)  # user | agent | system | api_key
-    actor_id: Mapped[Optional[str]] = mapped_column(UUID(as_uuid=False))
+    actor_id: Mapped[Optional[str]] = mapped_column(UUIDHex)
     actor_email: Mapped[Optional[str]] = mapped_column(String(255))
     resource_type: Mapped[Optional[str]] = mapped_column(String(100))
-    resource_id: Mapped[Optional[str]] = mapped_column(UUID(as_uuid=False))
+    resource_id: Mapped[Optional[str]] = mapped_column(UUIDHex)
     action: Mapped[str] = mapped_column(String(50), nullable=False)
-    details: Mapped[dict] = mapped_column(JSONB, default=dict)
+    details: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45))
     user_agent: Mapped[Optional[str]] = mapped_column(Text)
     correlation_id: Mapped[Optional[str]] = mapped_column(String(100))
@@ -551,12 +558,12 @@ class AuditLog(Base):
 class NotificationChannel(Base):
     __tablename__ = "notification_channels"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     channel_type: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # email | webhook | slack | teams | pagerduty
-    config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    config: Mapped[dict] = mapped_column(JSONVariant, default=dict, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
@@ -569,14 +576,14 @@ class NotificationChannel(Base):
 class APIKey(Base, TimestampMixin):
     __tablename__ = "api_keys"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     user_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE")
+        UUIDHex, ForeignKey("users.id", ondelete="CASCADE")
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     prefix: Mapped[str] = mapped_column(String(8), nullable=False)  # "cm_a1b2..."
-    scopes: Mapped[list[str]] = mapped_column(ARRAY(Text), default=["read"])
+    scopes: Mapped[list[str]] = mapped_column(ARRAYVariant, default=["read"])
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -591,18 +598,18 @@ class APIKey(Base, TimestampMixin):
 class ComplianceReport(Base):
     __tablename__ = "compliance_reports"
 
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_new_uuid)
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     report_type: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # expiry_summary | full_inventory | change_report | audit_export
     status: Mapped[str] = mapped_column(
         String(30), default="pending", nullable=False
     )  # pending | generating | completed | failed
-    parameters: Mapped[dict] = mapped_column(JSONB, default=dict)
+    parameters: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     file_path: Mapped[Optional[str]] = mapped_column(Text)
     file_format: Mapped[Optional[str]] = mapped_column(String(20))  # pdf | csv | json
     generated_by: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL")
+        UUIDHex, ForeignKey("users.id", ondelete="SET NULL")
     )
     generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(

@@ -125,16 +125,15 @@ def decode_token(token: str) -> dict[str, Any]:
 _IN_MEMORY_FAMILIES: dict[str, str] = {}  # family -> current valid jti
 
 
-def _redis() -> Any | None:
-    """Return a Redis client if Redis is reachable, else None."""
-    try:
-        import redis.asyncio as aioredis
+async def _redis() -> Any | None:
+    """Return a verified-reachable Redis client, or None.
 
-        return aioredis.from_url(
-            get_settings().redis.url, decode_responses=True, socket_connect_timeout=2
-        )
-    except Exception:
-        return None
+    Uses the shared client helper so repeated failures back off instead of
+    burning the connect timeout on every call.
+    """
+    from certmanager.core.redis_client import get_redis
+
+    return await get_redis()
 
 
 def _family_key(family: str) -> str:
@@ -149,7 +148,7 @@ async def rotate_refresh_family(family: str, new_jti: str, ttl_seconds: int) -> 
     """
     from certmanager.core.exceptions import TokenReuseError
 
-    client = _redis()
+    client = await _redis()
     if client is not None:
         try:
             # GET (existence check) and SET are not atomic here, so use a
@@ -158,11 +157,8 @@ async def rotate_refresh_family(family: str, new_jti: str, ttl_seconds: int) -> 
             if current == "REVOKED":
                 raise TokenReuseError("Refresh token family has been revoked")
             await client.set(_family_key(family), new_jti, ex=ttl_seconds)
-            await client.aclose()
             return new_jti
         except TokenReuseError:
-            if client is not None:
-                await client.aclose()
             raise
         except Exception:
             # Fall through to in-memory store
@@ -182,11 +178,10 @@ async def verify_refresh_family(family: str, presented_jti: str) -> bool:
     """
     from certmanager.core.exceptions import TokenReuseError
 
-    client = _redis()
+    client = await _redis()
     if client is not None:
         try:
             current = await client.get(_family_key(family))
-            await client.aclose()
             if current == "REVOKED":
                 return False
             if current is not None and current != presented_jti:
@@ -208,13 +203,12 @@ async def verify_refresh_family(family: str, presented_jti: str) -> bool:
 
 async def revoke_refresh_family(family: str) -> None:
     """Revoke an entire refresh token family (logout / reuse detection)."""
-    client = _redis()
+    client = await _redis()
     if client is not None:
         try:
             # Keep the REVOKED marker for the remainder of the token TTL
             ttl = int(get_settings().security.refresh_token_expire_hours * 3600)
             await client.set(_family_key(family), "REVOKED", ex=ttl)
-            await client.aclose()
             return
         except Exception:
             pass
