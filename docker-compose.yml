@@ -1,0 +1,92 @@
+version: "3.9"
+
+services:
+  # --- PostgreSQL with TimescaleDB ---
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: certmanager-postgres
+    environment:
+      POSTGRES_USER: certmanager
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: certmanager
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certmanager"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Redis ---
+  redis:
+    image: redis:7-alpine
+    container_name: certmanager-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- FastAPI API server ---
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: certmanager-api
+    environment:
+      CERTMGMT_DATABASE_URL: postgresql+asyncpg://certmanager:changeme@postgres:5432/certmanager
+      CERTMGMT_REDIS_URL: redis://redis:6379/0
+      CERTMGMT_SECRET_KEY: dev-secret-key-change-in-production-1234567890
+      CERTMGMT_ENCRYPTION_KEY: ""
+      CERTMGMT_ENVIRONMENT: development
+      CERTMGMT_CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000","http://localhost:80"]'
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./certmanager:/app/certmanager
+      - ./alembic:/app/alembic
+    command: >
+      sh -c "python -m alembic -c alembic/alembic.ini upgrade head &&
+             python -c 'from certmanager.core.seed import seed_all; import asyncio; from certmanager.core.database import get_session_factory; asyncio.run(seed_all(get_session_factory()()))' &&
+             uvicorn certmanager.api.app:app --host 0.0.0.0 --port 8000 --reload"
+
+  # --- Frontend (dev mode with Vite HMR) ---
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    container_name: certmanager-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    environment:
+      VITE_API_URL: http://localhost:8000
+    command: npm run dev -- --host 0.0.0.0
+
+  # --- MailHog (email testing in development) ---
+  mailhog:
+    image: mailhog/mailhog
+    container_name: certmanager-mailhog
+    ports:
+      - "8025:8025"   # Web UI
+      - "1025:1025"   # SMTP
+
+volumes:
+  pgdata:
+  redisdata:

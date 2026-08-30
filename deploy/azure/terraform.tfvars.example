@@ -1,0 +1,25 @@
+environment          = "staging"
+location             = "eastus2"
+resource_group_name  = "certmanager-staging"
+
+# Database
+postgres_sku         = "B_Standard_B1ms"
+postgres_storage_gb  = 32
+db_password          = "change-me-strong-password"
+
+# Redis
+redis_sku     = "Basic"
+redis_capacity = 1
+
+# Security — CHANGE THESE
+secret_key    = "change-me-64-character-random-string-for-jwt-signing"
+agent_psk     = "change-me-agent-pre-shared-key"
+
+# Compute
+api_replicas    = 2
+worker_replicas = 2
+container_cpu    = "0.5"
+container_memory = "1.0Gi"
+
+# Registry
+acr_sku = "Basic"

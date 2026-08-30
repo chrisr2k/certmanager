@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.so
+.venv/
+venv/
+env/
+
+# Environment
+.env
+*.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Alembic
+alembic/versions/*.pyc
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.tsbuildinfo
+
+# Docker
+docker-compose.override.yml
+
+# Agent local storage
+*.db
+*.db-journal
+agent_data/
+
+# Temp files
+*.tmp
+*.log
+tmp/

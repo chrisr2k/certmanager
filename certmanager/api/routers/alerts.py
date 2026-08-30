@@ -1,0 +1,301 @@
+"""Alerts router: rules, events, notification channels."""
+
+from __future__ import annotations
+
+from datetime import datetime, UTC
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from certmanager.api.dependencies import get_current_active_user, get_db
+from certmanager.core.exceptions import NotFoundError
+from certmanager.core.models import AlertEvent, AlertRule, AlertRuleChannel, NotificationChannel, User
+
+router = APIRouter()
+
+
+# --- Alert Rules ---
+
+@router.get("/rules")
+async def list_alert_rules(
+    is_enabled: Optional[bool] = Query(default=None),
+    severity: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List configured alert rules."""
+    query = select(AlertRule)
+    if is_enabled is not None:
+        query = query.where(AlertRule.is_enabled == is_enabled)
+    if severity:
+        query = query.where(AlertRule.severity == severity)
+
+    result = await db.execute(query.order_by(AlertRule.created_at.desc()))
+    rules = result.scalars().all()
+
+    return {
+        "data": [
+            {
+                "id": r.id,
+                "name": r.name,
+                "description": r.description,
+                "is_enabled": r.is_enabled,
+                "condition_type": r.condition_type,
+                "condition_config": r.condition_config,
+                "scope_filter": r.scope_filter,
+                "severity": r.severity,
+                "cooldown_minutes": r.cooldown_minutes,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in rules
+        ],
+        "total": len(rules),
+    }
+
+
+@router.post("/rules", status_code=201)
+async def create_alert_rule(
+    name: str,
+    condition_type: str,
+    condition_config: dict,
+    severity: str = "warning",
+    description: Optional[str] = None,
+    scope_filter: Optional[dict] = None,
+    cooldown_minutes: int = 60,
+    channel_ids: Optional[list[str]] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Create a new alert rule with optional notification channels."""
+    rule = AlertRule(
+        name=name,
+        description=description,
+        condition_type=condition_type,
+        condition_config=condition_config,
+        severity=severity,
+        scope_filter=scope_filter or {},
+        cooldown_minutes=cooldown_minutes,
+        created_by=current_user.id,
+    )
+    db.add(rule)
+    await db.flush()
+
+    # Attach notification channels if specified
+    if channel_ids:
+        for ch_id in channel_ids:
+            ch = AlertRuleChannel(
+                alert_rule_id=rule.id,
+                channel_type="notification_channel",  # will need to resolve from channel
+                channel_config={"notification_channel_id": ch_id},
+            )
+            db.add(ch)
+
+    await db.flush()
+    await db.refresh(rule)
+    return {"data": {"id": rule.id, "name": rule.name, "status": "created"}}
+
+
+@router.patch("/rules/{rule_id}")
+async def update_alert_rule(
+    rule_id: str,
+    name: Optional[str] = None,
+    is_enabled: Optional[bool] = None,
+    condition_config: Optional[dict] = None,
+    severity: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Update an alert rule."""
+    result = await db.execute(select(AlertRule).where(AlertRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise NotFoundError(f"Alert rule {rule_id} not found")
+
+    if name is not None:
+        rule.name = name
+    if is_enabled is not None:
+        rule.is_enabled = is_enabled
+    if condition_config is not None:
+        rule.condition_config = condition_config
+    if severity is not None:
+        rule.severity = severity
+
+    await db.flush()
+    return {"data": {"id": rule.id, "updated": True}}
+
+
+@router.delete("/rules/{rule_id}", status_code=204)
+async def delete_alert_rule(
+    rule_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Delete an alert rule and its associated channels."""
+    result = await db.execute(select(AlertRule).where(AlertRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise NotFoundError(f"Alert rule {rule_id} not found")
+    await db.delete(rule)
+    await db.flush()
+
+
+# --- Alert Events ---
+
+@router.get("/events")
+async def list_alert_events(
+    rule_id: Optional[str] = Query(default=None),
+    cert_id: Optional[str] = Query(default=None),
+    is_acknowledged: Optional[bool] = Query(default=None),
+    severity: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=250),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List alert events with filtering and pagination."""
+    query = select(AlertEvent)
+    if rule_id:
+        query = query.where(AlertEvent.alert_rule_id == rule_id)
+    if cert_id:
+        query = query.where(AlertEvent.cert_id == cert_id)
+    if is_acknowledged is not None:
+        query = query.where(AlertEvent.is_acknowledged == is_acknowledged)
+    if severity:
+        query = query.where(AlertEvent.severity == severity)
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar()
+
+    offset = (page - 1) * page_size
+    query = query.order_by(AlertEvent.created_at.desc()).offset(offset).limit(page_size)
+
+    result = await db.execute(query)
+    events = result.scalars().all()
+
+    return {
+        "data": [
+            {
+                "id": e.id,
+                "alert_rule_id": e.alert_rule_id,
+                "cert_id": e.cert_id,
+                "event_type": e.event_type,
+                "severity": e.severity,
+                "title": e.title,
+                "description": e.description,
+                "is_acknowledged": e.is_acknowledged,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in events
+        ],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
+
+
+@router.patch("/events/{event_id}/acknowledge")
+async def acknowledge_alert(
+    event_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Acknowledge an alert event."""
+    result = await db.execute(select(AlertEvent).where(AlertEvent.id == event_id))
+    event = result.scalar_one_or_none()
+    if not event:
+        raise NotFoundError(f"Alert event {event_id} not found")
+
+    event.is_acknowledged = True
+    event.acknowledged_by = current_user.id
+    event.acknowledged_at = datetime.now(UTC)
+    await db.flush()
+
+    return {"data": {"id": event.id, "acknowledged": True}}
+
+
+# --- Notification Channels ---
+
+@router.get("/channels")
+async def list_channels(
+    channel_type: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List notification channels."""
+    query = select(NotificationChannel)
+    if channel_type:
+        query = query.where(NotificationChannel.channel_type == channel_type)
+
+    result = await db.execute(query)
+    channels = result.scalars().all()
+
+    return {
+        "data": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "channel_type": c.channel_type,
+                "is_verified": c.is_verified,
+            }
+            for c in channels
+        ]
+    }
+
+
+@router.post("/channels", status_code=201)
+async def create_channel(
+    name: str,
+    channel_type: str,
+    config: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Create a notification channel."""
+    channel = NotificationChannel(
+        name=name,
+        channel_type=channel_type,
+        config=config,
+    )
+    db.add(channel)
+    await db.flush()
+    await db.refresh(channel)
+    return {"data": {"id": channel.id, "name": channel.name, "channel_type": channel.channel_type}}
+
+
+@router.post("/channels/{channel_id}/test")
+async def test_channel(
+    channel_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Send a test notification through a channel."""
+    result = await db.execute(
+        select(NotificationChannel).where(NotificationChannel.id == channel_id)
+    )
+    channel = result.scalar_one_or_none()
+    if not channel:
+        raise NotFoundError(f"Channel {channel_id} not found")
+
+    from certmanager.notifications.base import NotificationMessage, get_dispatcher
+
+    dispatcher = get_dispatcher()
+    backend = dispatcher.get_backend(channel.channel_type)
+
+    if not backend:
+        return {
+            "data": {
+                "status": "error",
+                "message": f"No backend registered for channel type: {channel.channel_type}",
+            }
+        }
+
+    success, msg = await backend.test(channel.config or {})
+
+    return {
+        "data": {
+            "status": "success" if success else "failed",
+            "message": msg,
+        }
+    }

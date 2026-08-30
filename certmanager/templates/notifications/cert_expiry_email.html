@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"></head>
+<body style="font-family: Arial, sans-serif; padding: 0; margin: 0; background: #f5f5f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; margin: 20px auto; background: white; border-radius: 8px; overflow: hidden;">
+    <!-- Header -->
+    <tr>
+      <td style="background: linear-gradient(135deg, #1677ff, #0050b3); padding: 24px 32px; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 20px;">CertManager</h1>
+        <p style="color: rgba(255,255,255,0.8); margin: 4px 0 0; font-size: 13px;">Certificate Expiry Alert</p>
+      </td>
+    </tr>
+
+    <!-- Severity banner -->
+    <tr>
+      <td style="padding: 16px 32px; background: {% if severity == 'critical' %}#fff1f0{% elif severity == 'warning' %}#fffbe6{% else %}#e6f7ff{% endif %}; border-left: 4px solid {% if severity == 'critical' %}#ff4d4f{% elif severity == 'warning' %}#faad14{% else %}#1677ff{% endif %};">
+        <strong style="color: {% if severity == 'critical' %}#ff4d4f{% elif severity == 'warning' %}#faad14{% else %}#1677ff{% endif %};">{{ severity.upper() }}</strong>
+        <span style="color: #666; margin-left: 8px;">{{ title }}</span>
+      </td>
+    </tr>
+
+    <!-- Body -->
+    <tr>
+      <td style="padding: 24px 32px;">
+        <p style="color: #333; font-size: 14px; line-height: 1.6; margin: 0 0 16px;">{{ body }}</p>
+
+        {% if cert_common_name %}
+        <table width="100%" cellpadding="8" cellspacing="0" style="background: #f9f9f9; border-radius: 6px; margin-bottom: 16px;">
+          <tr><td style="color: #888; font-size: 12px; width: 120px;">Certificate</td><td style="font-weight: 600;">{{ cert_common_name }}</td></tr>
+          {% if issuer %}<tr><td style="color: #888; font-size: 12px;">Issuer</td><td>{{ issuer }}</td></tr>{% endif %}
+          {% if not_after %}<tr><td style="color: #888; font-size: 12px;">Expires</td><td style="color: {% if days_left <= 7 %}#ff4d4f{% elif days_left <= 30 %}#faad14{% else %}#52c41a{% endif %};"><strong>{{ not_after }}</strong> ({{ days_left }} days)</td></tr>{% endif %}
+        </table>
+        {% endif %}
+
+        {% if action_url %}
+        <a href="{{ action_url }}" style="display: inline-block; padding: 10px 24px; background: #1677ff; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 600;">View in CertManager →</a>
+        {% endif %}
+      </td>
+    </tr>
+
+    <!-- Footer -->
+    <tr>
+      <td style="padding: 16px 32px; border-top: 1px solid #eee; text-align: center;">
+        <p style="color: #999; font-size: 11px; margin: 0;">
+          This is an automated alert from CertManager Enterprise Certificate Management.<br/>
+          To configure or disable this alert, visit your <a href="{{ settings_url }}" style="color: #1677ff;">alert settings</a>.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

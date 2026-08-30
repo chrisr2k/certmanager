@@ -1,0 +1,23 @@
+environment      = "staging"
+aws_region        = "us-east-1"
+domain_name       = "certmanager.example.com"
+certificate_arn   = ""
+
+# Database
+db_instance_class    = "db.t4g.medium"
+db_allocated_storage = 20
+db_password          = "change-me-strong-password"
+
+# Redis
+redis_node_type = "cache.t4g.micro"
+
+# Security — CHANGE THESE
+secret_key      = "change-me-64-character-random-string-for-jwt-signing"
+agent_psk       = "change-me-agent-pre-shared-key"
+encryption_key  = ""
+
+# Compute
+api_replicas    = 2
+worker_replicas = 2
+container_cpu    = 512
+container_memory = 1024

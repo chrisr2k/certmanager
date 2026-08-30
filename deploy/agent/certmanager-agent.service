@@ -1,0 +1,31 @@
+[Unit]
+Description=CertManager Datacenter Agent
+Documentation=https://github.com/your-org/certmanager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=certmgr
+Group=certmgr
+WorkingDirectory=/opt/certmanager-agent
+ExecStart=/opt/certmanager-agent/.venv/bin/python -m certmanager.agent.agent
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=certmanager-agent
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/certmanager-agent/agent_data
+ReadOnlyPaths=/opt/certmanager-agent/agent_config.json
+
+# Limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
