@@ -196,6 +196,12 @@ class ADCSConnector(CAConnector):
             thumbprint_sha256=data.get("thumbprint", hashlib.sha256(source_id.encode()).hexdigest()),
             not_before=not_before,
             not_after=not_after,
+            validity_days=(
+                int((not_after - not_before).total_seconds() / 86400)
+                if not_after != datetime.max.replace(tzinfo=timezone.utc)
+                and not_before != datetime.min.replace(tzinfo=timezone.utc)
+                else None
+            ),
             key_algorithm=data.get("key_algorithm", "unknown"),
             signature_algorithm=data.get("signature_algorithm", "unknown"),
             sans=data.get("sans", []),

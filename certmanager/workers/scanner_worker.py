@@ -50,7 +50,9 @@ def run_scan_job(self, scan_job_id: str):
         factory = get_session_factory()
         async with factory() as db:
             service = DiscoveryService(db)
-            return await service.run_discovery(scan_job_id)
+            result = await service.run_discovery(scan_job_id)
+            await db.commit()
+            return result
 
     try:
         result = _run_async(_run())
@@ -94,6 +96,7 @@ def run_full_discovery(self):
 
             service = DiscoveryService(db)
             result = await service.run_discovery(str(job.id))
+            await db.commit()
             return result
 
     try:
@@ -124,7 +127,9 @@ def run_health_checks(self):
         factory = get_session_factory()
         async with factory() as db:
             service = DiscoveryService(db)
-            return await service.run_health_checks()
+            results = await service.run_health_checks()
+            await db.commit()
+            return results
 
     try:
         results = _run_async(_run())
@@ -155,6 +160,7 @@ def auto_expire_certificates(self):
         async with factory() as db:
             service = CertificateService(db)
             count = await service.auto_expire_certificates()
+            await db.commit()
             return count
 
     try:
@@ -247,7 +253,7 @@ def scan_single_authority(self, authority_id: str):
             job.total_new = stats["new"]
             job.total_updated = stats["updated"]
             job.total_errors = stats["errors"]
-            await db.flush()
+            await db.commit()
 
             return stats
 

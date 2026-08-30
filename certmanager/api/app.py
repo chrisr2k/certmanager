@@ -76,12 +76,30 @@ def create_app() -> FastAPI:
         version="0.1.0",
         docs_url="/api/docs" if settings.environment != "production" else None,
         redoc_url="/api/redoc" if settings.environment != "production" else None,
-        openapi_url="/api/openapi.json",
+        openapi_url="/api/openapi.json" if settings.environment != "production" else None,
         lifespan=lifespan,
     )
 
-    # --- Middleware stack (applied in reverse order — last added runs first) ---
-    # 1. CORS (outermost)
+    # --- Middleware stack ---
+    # Starlette's add_middleware inserts at index 0, so the LAST added
+    # middleware is the OUTERMOST. Desired nesting (outermost first):
+    #   CORS -> CorrelationID -> RBAC -> Audit -> RateLimit
+    # This ensures 401/403 responses carry CORS + correlation headers and
+    # audit entries always have a correlation ID set.
+
+    # Innermost: rate limiting
+    app.add_middleware(RateLimitMiddleware)
+
+    # Audit logging — log every authenticated API call
+    app.add_middleware(AuditLogMiddleware)
+
+    # RBAC — authorization checks (skips auth endpoints)
+    app.add_middleware(RBACMiddleware)
+
+    # Correlation ID — inject X-Correlation-ID into every request
+    app.add_middleware(CorrelationIDMiddleware)
+
+    # Outermost: CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors.origins,
@@ -89,18 +107,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # 2. Correlation ID — inject X-Correlation-ID into every request
-    app.add_middleware(CorrelationIDMiddleware)
-
-    # 3. Rate limiting — token bucket per IP + user
-    app.add_middleware(RateLimitMiddleware)
-
-    # 4. Audit logging — log every API call
-    app.add_middleware(AuditLogMiddleware)
-
-    # 5. RBAC — authorization checks (skips auth endpoints)
-    app.add_middleware(RBACMiddleware)
 
     # --- Exception handlers ---
     @app.exception_handler(CertManagerError)
@@ -169,11 +175,17 @@ def create_app() -> FastAPI:
         from certmanager.core.database import check_database_connection
 
         db_ok = await check_database_connection()
-        return {
+        body = {
             "status": "healthy" if db_ok else "degraded",
             "version": "0.1.0",
             "database": "connected" if db_ok else "disconnected",
         }
+        # Return 503 when the database is unreachable so orchestrators
+        # (ECS, K8s probes) can react instead of routing to a dead API.
+        return JSONResponse(
+            status_code=status.HTTP_200_OK if db_ok else status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=body,
+        )
 
     # --- Mount routers ---
     from certmanager.api.routers import (

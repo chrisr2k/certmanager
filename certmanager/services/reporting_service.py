@@ -305,6 +305,28 @@ class ReportingService:
                 ])
             return output.getvalue().encode("utf-8"), "text/csv"
 
+        elif output_format == "pdf":
+            template_data = {
+                "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "period_start": since.strftime("%Y-%m-%d"),
+                "summary": {"total_events": len(logs)},
+                "logs": [
+                    {
+                        "id": log.id,
+                        "event_type": log.event_type,
+                        "actor_type": log.actor_type,
+                        "actor_email": log.actor_email or "",
+                        "resource_type": log.resource_type or "",
+                        "action": log.action,
+                        "details": json.dumps(log.details or {}),
+                        "ip_address": log.ip_address or "",
+                        "created_at": log.created_at.isoformat() if log.created_at else "",
+                    }
+                    for log in logs
+                ],
+            }
+            return self._render(template_data, "audit_export", "pdf")
+
         else:  # JSON
             data = [
                 {
@@ -365,15 +387,31 @@ class ReportingService:
             return html.encode("utf-8"), "text/html"
 
     def _render_csv(self, template_data: dict, template_name: str) -> tuple[bytes, str]:
-        """Export certificate data as CSV."""
+        """Export certificate data as CSV.
+
+        Each report type exposes its certificate rows under different
+        template-context keys; merge them (with a ``section`` column when a
+        report has more than one section).
+        """
         output = io.StringIO()
         writer = csv.writer(output)
 
-        # Extract certificate data from template context
-        certs = template_data.get("certificates", [])
-        expiring = template_data.get("expiring_soon", [])
+        # Map template name -> list of (context_key, section_label)
+        key_map = {
+            "full_inventory": [("certificates", None)],
+            "expiry_summary": [("expiring_soon", "expiring_soon"), ("expired_certs", "expired")],
+            "change_report": [("new_certs", "new"), ("expired_certs", "expired")],
+        }
+        sections = key_map.get(template_name, [("certificates", None)])
 
-        rows = certs or expiring or []
+        rows: list[dict] = []
+        multi_section = sum(1 for _, label in sections if label) > 1
+        for key, label in sections:
+            for row in template_data.get(key, []):
+                if multi_section and label:
+                    rows.append({"section": label, **row})
+                else:
+                    rows.append(row)
 
         if rows:
             # Write headers from first row keys

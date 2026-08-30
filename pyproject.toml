@@ -32,7 +32,7 @@ dependencies = [
     "asyncpg>=0.29.0",
     "alembic>=1.13.0",
     "python-jose[cryptography]>=3.3.0",
-    "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=4.1.0,<5.0.0",
     "pyotp>=2.9.0",
     "python-multipart>=0.0.9",
     "redis>=5.0.0",
@@ -42,7 +42,6 @@ dependencies = [
     "aioboto3>=13.0.0",
     "azure-identity>=1.17.0",
     "azure-keyvault-certificates>=4.8.0",
-    "azext-keyvault>=1.0.0",
     "aiohttp>=3.9.0",
     "typer[all]>=0.12.0",
     "rich>=13.0.0",
@@ -64,6 +63,7 @@ dev = [
     "mypy>=1.10.0",
     "pre-commit>=3.7.0",
     "factory-boy>=3.3.0",
+    "aiosqlite>=0.20.0",
 ]
 
 [project.scripts]

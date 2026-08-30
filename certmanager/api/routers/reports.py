@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,17 @@ from certmanager.core.exceptions import NotFoundError
 from certmanager.core.models import ComplianceReport, User
 
 router = APIRouter()
+
+VALID_REPORT_TYPES = {"expiry_summary", "full_inventory", "change_report", "audit_export"}
+VALID_FORMATS = {"pdf", "csv", "json"}
+
+
+class ReportRequest(BaseModel):
+    """Body for requesting a compliance report."""
+
+    report_type: str = Field(description="expiry_summary | full_inventory | change_report | audit_export")
+    parameters: Optional[dict] = None
+    file_format: str = Field(default="pdf")
 
 
 @router.get("")
@@ -60,18 +72,23 @@ async def list_reports(
 
 @router.post("", status_code=201)
 async def request_report(
-    report_type: str,
-    parameters: Optional[dict] = None,
-    file_format: str = "pdf",
+    body: ReportRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Request generation of a compliance report. Dispatches to Celery."""
+    from fastapi import HTTPException
+
+    if body.report_type not in VALID_REPORT_TYPES:
+        raise HTTPException(status_code=422, detail=f"Invalid report_type: {body.report_type}")
+    if body.file_format not in VALID_FORMATS:
+        raise HTTPException(status_code=422, detail=f"Invalid file_format: {body.file_format}")
+
     report = ComplianceReport(
-        report_type=report_type,
+        report_type=body.report_type,
         status="pending",
-        parameters=parameters or {},
-        file_format=file_format,
+        parameters=body.parameters or {},
+        file_format=body.file_format,
         generated_by=current_user.id,
     )
     db.add(report)

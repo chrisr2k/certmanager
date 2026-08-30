@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # --- PostgreSQL with TimescaleDB ---
   postgres:
@@ -41,12 +39,14 @@ services:
       dockerfile: docker/Dockerfile.api
     container_name: certmanager-api
     environment:
-      CERTMGMT_DATABASE_URL: postgresql+asyncpg://certmanager:changeme@postgres:5432/certmanager
-      CERTMGMT_REDIS_URL: redis://redis:6379/0
-      CERTMGMT_SECRET_KEY: dev-secret-key-change-in-production-1234567890
-      CERTMGMT_ENCRYPTION_KEY: ""
       CERTMGMT_ENVIRONMENT: development
-      CERTMGMT_CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000","http://localhost:80"]'
+      CERTMGMT_DATABASE__URL: postgresql+asyncpg://certmanager:changeme@postgres:5432/certmanager
+      CERTMGMT_DATABASE__URL_SYNC: postgresql+psycopg2://certmanager:changeme@postgres:5432/certmanager
+      CERTMGMT_REDIS__URL: redis://redis:6379/0
+      CERTMGMT_SECURITY__SECRET_KEY: dev-secret-key-change-in-production-1234567890
+      CERTMGMT_SECURITY__ENCRYPTION_KEY: ""
+      CERTMGMT_CORS__ORIGINS: '["http://localhost:5173","http://localhost:3000","http://localhost:80"]'
+      CERTMGMT_AGENT__PSK: dev-agent-psk-change-in-production
     ports:
       - "8000:8000"
     depends_on:
@@ -57,16 +57,74 @@ services:
     volumes:
       - ./certmanager:/app/certmanager
       - ./alembic:/app/alembic
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=5).status==200 else 1)\""]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     command: >
       sh -c "python -m alembic -c alembic/alembic.ini upgrade head &&
              python -c 'from certmanager.core.seed import seed_all; import asyncio; from certmanager.core.database import get_session_factory; asyncio.run(seed_all(get_session_factory()()))' &&
              uvicorn certmanager.api.app:app --host 0.0.0.0 --port 8000 --reload"
+
+  # --- Celery worker (scans, alerts, reports, CT monitoring) ---
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: certmanager-worker
+    environment:
+      CERTMGMT_ENVIRONMENT: development
+      CERTMGMT_DATABASE__URL: postgresql+asyncpg://certmanager:changeme@postgres:5432/certmanager
+      CERTMGMT_DATABASE__URL_SYNC: postgresql+psycopg2://certmanager:changeme@postgres:5432/certmanager
+      CERTMGMT_REDIS__URL: redis://redis:6379/0
+      CERTMGMT_SECURITY__SECRET_KEY: dev-secret-key-change-in-production-1234567890
+      CERTMGMT_SECURITY__ENCRYPTION_KEY: ""
+      CERTMGMT_AGENT__PSK: dev-agent-psk-change-in-production
+      CERTMGMT_SMTP__HOST: mailhog
+      CERTMGMT_SMTP__PORT: "1025"
+      CERTMGMT_SMTP__USE_TLS: "false"
+      CERTMGMT_SMTP__FROM_ADDRESS: "CertManager <noreply@example.com>"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./certmanager:/app/certmanager
+      - ./alembic:/app/alembic
+      - ./reports:/app/reports
+    command: celery -A certmanager.workers.celery_app worker --loglevel=info --concurrency=2
+
+  # --- Celery beat (scheduled tasks) ---
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: certmanager-beat
+    environment:
+      CERTMGMT_ENVIRONMENT: development
+      CERTMGMT_DATABASE__URL: postgresql+asyncpg://certmanager:changeme@postgres:5432/certmanager
+      CERTMGMT_DATABASE__URL_SYNC: postgresql+psycopg2://certmanager:changeme@postgres:5432/certmanager
+      CERTMGMT_REDIS__URL: redis://redis:6379/0
+      CERTMGMT_SECURITY__SECRET_KEY: dev-secret-key-change-in-production-1234567890
+      CERTMGMT_SECURITY__ENCRYPTION_KEY: ""
+      CERTMGMT_AGENT__PSK: dev-agent-psk-change-in-production
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./certmanager:/app/certmanager
+      - ./alembic:/app/alembic
+    command: celery -A certmanager.workers.celery_app beat --loglevel=info
 
   # --- Frontend (dev mode with Vite HMR) ---
   frontend:
     build:
       context: ./frontend
       dockerfile: ../docker/Dockerfile.frontend
+      target: dev
     container_name: certmanager-frontend
     ports:
       - "5173:5173"

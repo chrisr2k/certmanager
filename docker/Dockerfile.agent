@@ -2,14 +2,18 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Agent needs fewer dependencies than the API
+# The agent runs inside datacenters and must stay lightweight: it only needs
+# the agent package plus the core config/logging modules it imports.
+# (No aioodbc hack: AD CS enumeration goes through the PowerShell scanner,
+# not a database driver.)
 RUN pip install --no-cache-dir \
     aiohttp \
     typer \
     rich \
     cryptography \
     structlog \
-    aioodbc 2>/dev/null || true
+    pydantic \
+    pydantic-settings
 
 COPY certmanager/agent/ ./certmanager/agent/
 COPY certmanager/__init__.py ./certmanager/

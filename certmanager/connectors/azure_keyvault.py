@@ -267,6 +267,7 @@ class AzureKeyVaultConnector(CAConnector):
             thumbprint_sha256=thumbprint or hashlib.sha256(cert_id.encode()).hexdigest(),
             not_before=not_before,
             not_after=not_after,
+            validity_days=validity_days or None,
             key_algorithm=key_algorithm,
             signature_algorithm=signature_algorithm,
             sans=sans,

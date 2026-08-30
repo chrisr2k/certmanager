@@ -1,7 +1,6 @@
 # Development overrides — extends docker-compose.yml
 # Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-
-version: "3.9"
+# Keeps the seed step from the base file; only changes logging and reload flags.
 
 services:
   api:
@@ -10,6 +9,7 @@ services:
       CERTMGMT_LOG_FORMAT: console
     command: >
       sh -c "python -m alembic -c alembic/alembic.ini upgrade head &&
+             python -c 'from certmanager.core.seed import seed_all; import asyncio; from certmanager.core.database import get_session_factory; asyncio.run(seed_all(get_session_factory()()))' &&
              uvicorn certmanager.api.app:app --host 0.0.0.0 --port 8000 --reload --log-level debug"
 
   frontend:

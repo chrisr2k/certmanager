@@ -335,6 +335,7 @@ class AWSACMConnector(CAConnector):
             thumbprint_sha256=thumbprint or hashlib.sha256(arn.encode()).hexdigest(),
             not_before=not_before if not_before else datetime.min,
             not_after=not_after if not_after else datetime.max,
+            validity_days=validity_days or None,
             key_algorithm=key_algorithm,
             signature_algorithm=signature_algorithm,
             sans=sans,

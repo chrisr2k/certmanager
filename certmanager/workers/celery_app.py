@@ -30,6 +30,7 @@ app = Celery(
         "certmanager.workers.scanner_worker",
         "certmanager.workers.alert_worker",
         "certmanager.workers.report_worker",
+        "certmanager.workers.ct_log_worker",
     ],
 )
 
@@ -72,8 +73,13 @@ app.conf.beat_schedule = {
     },
     # CT log monitoring — runs daily at 06:00 UTC
     "ct-log-monitor": {
-        "task": "certmanager.workers.alert_worker.check_ct_logs",
+        "task": "certmanager.workers.ct_log_worker.check_ct_logs",
         "schedule": crontab(hour=6, minute=0),
+    },
+    # Weekly compliance report — runs Sunday 04:00 UTC
+    "weekly-compliance-report": {
+        "task": "certmanager.workers.report_worker.scheduled_weekly_report",
+        "schedule": crontab(hour=4, minute=0, day_of_week=0),
     },
     # Scheduled TLS network scans — runs weekly Sunday 02:00 UTC
     "scheduled-tls-scans": {

@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CERTMGMT_",
         env_nested_delimiter="__",
+        env_file=".env",
         case_sensitive=False,
         extra="ignore",
     )
@@ -95,6 +96,26 @@ class Settings(BaseSettings):
         if v not in allowed:
             raise ValueError(f"environment must be one of {allowed}, got {v}")
         return v
+
+    @model_validator(mode="after")
+    def reject_insecure_production_defaults(self) -> "Settings":
+        """Refuse to boot production/staging with default secrets or dev DB credentials."""
+        if self.environment == "development":
+            return self
+        problems: list[str] = []
+        if self.security.secret_key == "change-me-in-production":
+            problems.append("CERTMGMT_SECURITY__SECRET_KEY is the default value")
+        if not self.security.encryption_key:
+            problems.append("CERTMGMT_SECURITY__ENCRYPTION_KEY is not set")
+        if "changeme" in self.database.url:
+            problems.append("CERTMGMT_DATABASE__URL uses default credentials")
+        if not self.agent.psk:
+            problems.append("CERTMGMT_AGENT__PSK is not set")
+        if problems:
+            raise ValueError(
+                f"Refusing to start in {self.environment!r} environment: " + "; ".join(problems)
+            )
+        return self
 
 
 # Singleton instance

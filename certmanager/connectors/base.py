@@ -47,6 +47,7 @@ class CertificateRecord:
     thumbprint_sha256: str
     not_before: datetime
     not_after: datetime
+    validity_days: Optional[int] = None  # computed as (not_after - not_before) when omitted
     key_algorithm: str = "unknown"
     signature_algorithm: str = "unknown"
     sans: List[str] = field(default_factory=list)
