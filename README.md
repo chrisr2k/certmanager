@@ -98,6 +98,9 @@ certmanager certs show <id>   # Show certificate detail
 certmanager agent init --url https://central.example.com --psk <key>
 certmanager agent run --config agent_config.json   # Run agent polling loop
 
+# Full agent rollout guide (Windows/Linux/Docker, air-gap, troubleshooting):
+# see deploy/agent/README.md
+
 # Air-gap import (HMAC-verified with the agent PSK)
 certmanager import-data results.json --token <api-token>
 ```
