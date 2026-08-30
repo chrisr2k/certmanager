@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -20,10 +18,10 @@ class ScanTriggerRequest(BaseModel):
     """Body for triggering a scan job."""
 
     job_type: str = "full_discovery"
-    scope_config: Optional[dict] = None
-    agent_id: Optional[str] = None
-    cidr_ranges: Optional[list[str]] = None
-    ports: Optional[list[int]] = None
+    scope_config: dict | None = None
+    agent_id: str | None = None
+    cidr_ranges: list[str] | None = None
+    ports: list[int] | None = None
 
 
 def _dispatch_scan(scan_job_id: str) -> None:
@@ -48,8 +46,8 @@ def _dispatch_scan(scan_job_id: str) -> None:
 
 @router.get("")
 async def list_scans(
-    job_type: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
+    job_type: str | None = Query(default=None),
+    status: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -117,6 +115,7 @@ async def trigger_scan(
     if body.job_type == "tls_scan":
         if not body.agent_id:
             from certmanager.core.exceptions import ValidationError
+
             raise ValidationError("agent_id is required for tls_scan jobs")
 
         from certmanager.services.agent_service import AgentService

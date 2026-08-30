@@ -10,12 +10,10 @@ Uses asyncio for concurrent scanning of multiple hosts.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import ipaddress
 import ssl
 import time
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import structlog
 
@@ -82,7 +80,7 @@ class TLSScanner(ScannerPlugin):
                     status="ok",
                     message=f"TLS scanning operational (tested against {test_host}:{test_port})",
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return HealthStatus(
                     status="degraded",
                     message="TLS test connection timed out — scanner may be firewalled",
@@ -124,7 +122,9 @@ class TLSScanner(ScannerPlugin):
                 network = ipaddress.ip_network(cidr, strict=False)
                 # Limit to /16 or smaller to avoid scanning millions of IPs
                 if network.num_addresses > 65536:
-                    errors.append(f"CIDR {cidr} too large ({network.num_addresses} hosts). Skipping.")
+                    errors.append(
+                        f"CIDR {cidr} too large ({network.num_addresses} hosts). Skipping."
+                    )
                     continue
                 # Cap hosts per range (safety + performance). Log loudly —
                 # a silent truncation reads as "full discovery" when it isn't.
@@ -198,7 +198,7 @@ class TLSScanner(ScannerPlugin):
             },
         )
 
-    async def _scan_host_port(self, host: str, port: int) -> Optional[dict]:
+    async def _scan_host_port(self, host: str, port: int) -> dict | None:
         """Scan a single host:port for a TLS certificate.
 
         Returns:
@@ -226,7 +226,7 @@ class TLSScanner(ScannerPlugin):
 
                 return self._parse_certificate(cert_bin, host, port)
 
-            except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
+            except (TimeoutError, ConnectionRefusedError, OSError):
                 return None
             except ssl.SSLError:
                 # TLS present but negotiation failed — still record the endpoint
@@ -266,9 +266,7 @@ class TLSScanner(ScannerPlugin):
         # SANs
         sans: list[str] = []
         try:
-            san_ext = cert.extensions.get_extension_for_class(
-                x509.SubjectAlternativeName
-            )
+            san_ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
             sans = san_ext.value.get_values_for_type(x509.DNSName)
         except x509.ExtensionNotFound:
             if common_name:
@@ -297,7 +295,7 @@ class TLSScanner(ScannerPlugin):
             pass
 
         # Expiry status
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not_after < now:
             status = "expired"
         elif not_before > now:

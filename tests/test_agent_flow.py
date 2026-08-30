@@ -10,7 +10,6 @@ Covers the critical agent bugs found in review:
 from __future__ import annotations
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -143,7 +142,11 @@ class TestAgentAuthEnforcement:
         assert resp.status_code == 403
 
     async def test_submit_result_rejected_for_other_agents_job(
-        self, client: AsyncClient, seeded_db: AsyncSession, registered: dict, agent_headers: dict,
+        self,
+        client: AsyncClient,
+        seeded_db: AsyncSession,
+        registered: dict,
+        agent_headers: dict,
         admin_headers: dict,
     ):
         # Approve agent 1

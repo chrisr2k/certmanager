@@ -7,9 +7,8 @@ Prefix: CERTMGMT_AGENT__
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,7 +22,9 @@ class AgentSettings(BaseSettings):
     )
 
     # Central API connection
-    api_url: str = Field(default="https://localhost:8000", description="Central CertManager API URL")
+    api_url: str = Field(
+        default="https://localhost:8000", description="Central CertManager API URL"
+    )
     psk: str = Field(default="", description="Pre-shared key for agent registration")
 
     # Agent identity
@@ -32,7 +33,9 @@ class AgentSettings(BaseSettings):
     datacenter_code: str = Field(default="", description="Datacenter code this agent belongs to")
 
     # Registration
-    agent_id: Optional[str] = Field(default=None, description="Agent UUID (set after registration, informational)")
+    agent_id: str | None = Field(
+        default=None, description="Agent UUID (set after registration, informational)"
+    )
 
     # Polling
     poll_interval: int = Field(default=30, description="Seconds between job poll cycles")
@@ -42,18 +45,26 @@ class AgentSettings(BaseSettings):
     data_dir: str = Field(default="agent_data", description="Agent data directory")
 
     # TLS scanner settings (if agent_type=tls_scanner)
-    tls_cidr_ranges: list[str] = Field(default_factory=list, description="CIDR ranges for TLS scanning")
-    tls_ports: list[int] = Field(default_factory=lambda: [443, 8443, 636, 993, 995], description="Ports to scan for TLS")
+    tls_cidr_ranges: list[str] = Field(
+        default_factory=list, description="CIDR ranges for TLS scanning"
+    )
+    tls_ports: list[int] = Field(
+        default_factory=lambda: [443, 8443, 636, 993, 995], description="Ports to scan for TLS"
+    )
     tls_timeout: float = Field(default=5.0, description="TLS handshake timeout in seconds")
-    tls_max_hosts_per_cidr: int = Field(default=256, description="Max hosts scanned per CIDR (safety cap)")
+    tls_max_hosts_per_cidr: int = Field(
+        default=256, description="Max hosts scanned per CIDR (safety cap)"
+    )
 
     # Connector listener (the central AD CS connector calls the agent here)
     listener_enabled: bool = Field(default=True, description="Serve the connector HTTP listener")
     listener_host: str = Field(default="0.0.0.0", description="Listener bind address")
     listener_port: int = Field(default=8443, description="Listener port")
-    listener_ssl_cert: Optional[str] = Field(default=None, description="Path to listener TLS cert PEM")
-    listener_ssl_key: Optional[str] = Field(default=None, description="Path to listener TLS key PEM")
-    listener_ssl_ca: Optional[str] = Field(default=None, description="Path to client CA PEM (requires client certs when set)")
+    listener_ssl_cert: str | None = Field(default=None, description="Path to listener TLS cert PEM")
+    listener_ssl_key: str | None = Field(default=None, description="Path to listener TLS key PEM")
+    listener_ssl_ca: str | None = Field(
+        default=None, description="Path to client CA PEM (requires client certs when set)"
+    )
 
     # AD CS scanner settings (if agent_type=adcs)
     adcs_ca_server: str = Field(default="", description="AD CS server hostname")
@@ -65,7 +76,7 @@ class AgentSettings(BaseSettings):
     log_format: str = Field(default="json")  # json | console
 
 
-def load_agent_config(config_path: Optional[str] = None) -> AgentSettings:
+def load_agent_config(config_path: str | None = None) -> AgentSettings:
     """Load agent configuration from file and environment.
 
     Args:
@@ -75,7 +86,6 @@ def load_agent_config(config_path: Optional[str] = None) -> AgentSettings:
         AgentSettings with merged config (env vars override file values).
     """
     import json
-    import os
 
     settings = AgentSettings()
 
@@ -117,6 +127,7 @@ def load_agent_config(config_path: Optional[str] = None) -> AgentSettings:
     # Auto-detect agent name from hostname
     if not settings.agent_name:
         import socket
+
         settings.agent_name = socket.gethostname()
 
     # Ensure data directory exists
@@ -125,7 +136,7 @@ def load_agent_config(config_path: Optional[str] = None) -> AgentSettings:
     return settings
 
 
-def save_agent_config(settings: AgentSettings, config_path: Optional[str] = None) -> None:
+def save_agent_config(settings: AgentSettings, config_path: str | None = None) -> None:
     """Persist agent settings to the JSON config file.
 
     Only saves persistent fields — NEVER runtime tokens (JWT/agent tokens

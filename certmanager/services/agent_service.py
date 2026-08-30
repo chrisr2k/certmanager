@@ -30,9 +30,7 @@ class AgentService:
         Returns:
             Dict with cidr_ranges, ports, and schedule info.
         """
-        result = await self.db.execute(
-            select(Agent).where(Agent.id == agent_id)
-        )
+        result = await self.db.execute(select(Agent).where(Agent.id == agent_id))
         agent = result.scalar_one_or_none()
 
         if not agent:
@@ -70,9 +68,7 @@ class AgentService:
         Returns:
             Updated scan target dict.
         """
-        result = await self.db.execute(
-            select(Agent).where(Agent.id == agent_id)
-        )
+        result = await self.db.execute(select(Agent).where(Agent.id == agent_id))
         agent = result.scalar_one_or_none()
 
         if not agent:
@@ -160,7 +156,7 @@ class AgentService:
         result = await self.db.execute(
             select(Agent).where(
                 Agent.agent_type.in_(["tls_scanner", "generic"]),
-                Agent.is_approved == True,
+                Agent.is_approved,
                 Agent.status == "online",
             )
         )

@@ -6,7 +6,7 @@ and agents. Used by the frontend dashboard and topology views.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -37,9 +37,7 @@ async def get_topology(
     """
     # Load all datacenters with relationships
     dc_result = await db.execute(
-        select(Datacenter)
-        .where(Datacenter.is_active == True)
-        .order_by(Datacenter.name)
+        select(Datacenter).where(Datacenter.is_active).order_by(Datacenter.name)
     )
     datacenters = dc_result.scalars().all()
 
@@ -64,15 +62,13 @@ async def get_topology(
     # Load all CAs with health
     ca_result = await db.execute(
         select(CertificateAuthority)
-        .where(CertificateAuthority.is_active == True)
+        .where(CertificateAuthority.is_active)
         .order_by(CertificateAuthority.name)
     )
     all_cas = ca_result.scalars().all()
 
     # Load all agents
-    agent_result = await db.execute(
-        select(Agent).order_by(Agent.name)
-    )
+    agent_result = await db.execute(select(Agent).order_by(Agent.name))
     all_agents = agent_result.scalars().all()
 
     # Build topology tree: DC → CAs + Agents
@@ -83,39 +79,43 @@ async def get_topology(
         dc_agents = [a for a in all_agents if str(a.datacenter_id) == dc_id]
         cert_stats = cert_by_dc.get(dc_id, {"active": 0, "expired": 0, "revoked": 0, "total": 0})
 
-        topology.append({
-            "id": dc_id,
-            "name": dc.name,
-            "code": dc.code,
-            "location": dc.location,
-            "timezone": dc.timezone,
-            "is_active": dc.is_active,
-            "certificate_counts": cert_stats,
-            "authorities": [
-                {
-                    "id": str(ca.id),
-                    "name": ca.name,
-                    "ca_type": ca.ca_type,
-                    "health_status": ca.health_status,
-                    "last_scan_at": ca.last_scan_at.isoformat() if ca.last_scan_at else None,
-                    "last_scan_status": ca.last_scan_status,
-                    "last_error": ca.last_error,
-                }
-                for ca in dc_cas
-            ],
-            "agents": [
-                {
-                    "id": str(a.id),
-                    "name": a.name,
-                    "agent_type": a.agent_type,
-                    "status": a.status,
-                    "is_approved": a.is_approved,
-                    "hostname": a.hostname,
-                    "last_heartbeat_at": a.last_heartbeat_at.isoformat() if a.last_heartbeat_at else None,
-                }
-                for a in dc_agents
-            ],
-        })
+        topology.append(
+            {
+                "id": dc_id,
+                "name": dc.name,
+                "code": dc.code,
+                "location": dc.location,
+                "timezone": dc.timezone,
+                "is_active": dc.is_active,
+                "certificate_counts": cert_stats,
+                "authorities": [
+                    {
+                        "id": str(ca.id),
+                        "name": ca.name,
+                        "ca_type": ca.ca_type,
+                        "health_status": ca.health_status,
+                        "last_scan_at": ca.last_scan_at.isoformat() if ca.last_scan_at else None,
+                        "last_scan_status": ca.last_scan_status,
+                        "last_error": ca.last_error,
+                    }
+                    for ca in dc_cas
+                ],
+                "agents": [
+                    {
+                        "id": str(a.id),
+                        "name": a.name,
+                        "agent_type": a.agent_type,
+                        "status": a.status,
+                        "is_approved": a.is_approved,
+                        "hostname": a.hostname,
+                        "last_heartbeat_at": a.last_heartbeat_at.isoformat()
+                        if a.last_heartbeat_at
+                        else None,
+                    }
+                    for a in dc_agents
+                ],
+            }
+        )
 
     # Unassigned CAs and agents
     unassigned_cas = [
@@ -126,7 +126,8 @@ async def get_topology(
             "health_status": ca.health_status,
             "last_scan_at": ca.last_scan_at.isoformat() if ca.last_scan_at else None,
         }
-        for ca in all_cas if ca.datacenter_id is None
+        for ca in all_cas
+        if ca.datacenter_id is None
     ]
     unassigned_agents = [
         {
@@ -136,7 +137,8 @@ async def get_topology(
             "status": a.status,
             "last_heartbeat_at": a.last_heartbeat_at.isoformat() if a.last_heartbeat_at else None,
         }
-        for a in all_agents if a.datacenter_id is None
+        for a in all_agents
+        if a.datacenter_id is None
     ]
 
     return {
@@ -171,7 +173,7 @@ async def get_health_overview(
     """
     ca_result = await db.execute(
         select(CertificateAuthority)
-        .where(CertificateAuthority.is_active == True)
+        .where(CertificateAuthority.is_active)
         .order_by(CertificateAuthority.name)
     )
     authorities = ca_result.scalars().all()
@@ -209,9 +211,7 @@ async def get_health_overview(
         # Count certs for this CA
         cert_count = (
             await db.execute(
-                select(func.count(Certificate.id)).where(
-                    Certificate.source_ca_id == str(ca.id)
-                )
+                select(func.count(Certificate.id)).where(Certificate.source_ca_id == str(ca.id))
             )
         ).scalar() or 0
 
@@ -231,18 +231,20 @@ async def get_health_overview(
                 }
                 break
 
-        ca_details.append({
-            "id": str(ca.id),
-            "name": ca.name,
-            "ca_type": ca.ca_type,
-            "datacenter_id": str(ca.datacenter_id) if ca.datacenter_id else None,
-            "health_status": ca.health_status,
-            "last_scan_at": ca.last_scan_at.isoformat() if ca.last_scan_at else None,
-            "last_scan_status": ca.last_scan_status,
-            "last_error": ca.last_error,
-            "certificate_count": cert_count,
-            "latest_scan": latest_scan,
-        })
+        ca_details.append(
+            {
+                "id": str(ca.id),
+                "name": ca.name,
+                "ca_type": ca.ca_type,
+                "datacenter_id": str(ca.datacenter_id) if ca.datacenter_id else None,
+                "health_status": ca.health_status,
+                "last_scan_at": ca.last_scan_at.isoformat() if ca.last_scan_at else None,
+                "last_scan_status": ca.last_scan_status,
+                "last_error": ca.last_error,
+                "certificate_count": cert_count,
+                "latest_scan": latest_scan,
+            }
+        )
 
     # Health timeline (last 24h, hourly buckets)
     timeline = [

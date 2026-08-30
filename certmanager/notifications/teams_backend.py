@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import structlog
+
 from certmanager.notifications.base import NotificationBackend, NotificationMessage
 
 logger = structlog.get_logger()
@@ -41,11 +42,13 @@ class TeamsBackend(NotificationBackend):
 
             actions = []
             if message.action_url:
-                actions.append({
-                    "type": "Action.OpenUrl",
-                    "title": "View in CertManager",
-                    "url": message.action_url,
-                })
+                actions.append(
+                    {
+                        "type": "Action.OpenUrl",
+                        "title": "View in CertManager",
+                        "url": message.action_url,
+                    }
+                )
 
             payload = {
                 "type": "message",
@@ -81,7 +84,9 @@ class TeamsBackend(NotificationBackend):
             }
 
             async with aiohttp.ClientSession() as session:
-                async with session.post(webhook_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.post(
+                    webhook_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
                     if resp.status in (200, 202, 204):
                         logger.info("teams_sent", title=message.title)
                         return True

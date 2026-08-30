@@ -11,9 +11,8 @@ stalling every request.
 from __future__ import annotations
 
 import time
-from typing import Optional
 
-_client: Optional[object] = None
+_client: object | None = None
 _creation_failed = False
 _available = True
 _last_failure: float = 0.0
@@ -22,7 +21,7 @@ BACKOFF_SECONDS = 60.0
 PING_TIMEOUT = 1.5
 
 
-def _get_client() -> Optional[object]:
+def _get_client() -> object | None:
     """Get (or lazily create) the shared Redis client.
 
     Returns None if Redis was marked unavailable within the backoff window.
@@ -52,7 +51,7 @@ def _get_client() -> Optional[object]:
     return _client
 
 
-async def get_redis() -> Optional[object]:
+async def get_redis() -> object | None:
     """Return a verified-reachable Redis client, or None on unavailability."""
     global _available, _last_failure
 

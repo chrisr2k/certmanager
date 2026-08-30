@@ -13,13 +13,11 @@ from __future__ import annotations
 import base64
 import os
 from dataclasses import dataclass
-from typing import Any
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from certmanager.core.config import get_settings
-
 
 # ---------------------------------------------------------------------------
 # High-level: Fernet-based encryption (simpler, for most credential types)
@@ -94,9 +92,7 @@ def aes_gcm_encrypt(plaintext: str, key: bytes | None = None) -> tuple[bytes, by
     return nonce, ciphertext, tag
 
 
-def aes_gcm_decrypt(
-    nonce: bytes, ciphertext: bytes, tag: bytes, key: bytes | None = None
-) -> str:
+def aes_gcm_decrypt(nonce: bytes, ciphertext: bytes, tag: bytes, key: bytes | None = None) -> str:
     """Decrypt AES-256-GCM encrypted data.
 
     Args:

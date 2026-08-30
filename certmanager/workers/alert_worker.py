@@ -71,17 +71,16 @@ def evaluate_single_rule(self, rule_id: str):
     Args:
         rule_id: UUID of the alert rule to evaluate.
     """
-    from certmanager.core.database import get_session_factory
-    from certmanager.services.alerting_service import AlertingService
     from sqlalchemy import select
+
+    from certmanager.core.database import get_session_factory
     from certmanager.core.models import AlertRule
+    from certmanager.services.alerting_service import AlertingService
 
     async def _run():
         factory = get_session_factory()
         async with factory() as db:
-            result = await db.execute(
-                select(AlertRule).where(AlertRule.id == rule_id)
-            )
+            result = await db.execute(select(AlertRule).where(AlertRule.id == rule_id))
             rule = result.scalar_one_or_none()
 
             if not rule:

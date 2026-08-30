@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 
 class LoginRequest(BaseModel):
@@ -12,7 +10,9 @@ class LoginRequest(BaseModel):
 
     email: str = Field(..., description="User email address")
     password: str = Field(..., min_length=1, description="User password")
-    mfa_code: Optional[str] = Field(default=None, description="TOTP MFA code (required if MFA enabled)")
+    mfa_code: str | None = Field(
+        default=None, description="TOTP MFA code (required if MFA enabled)"
+    )
 
 
 class TokenResponse(BaseModel):
@@ -33,7 +33,7 @@ class RefreshRequest(BaseModel):
 class LogoutRequest(BaseModel):
     """Logout request — the refresh token revokes its family server-side."""
 
-    refresh_token: Optional[str] = Field(default=None, description="Refresh token to revoke")
+    refresh_token: str | None = Field(default=None, description="Refresh token to revoke")
 
 
 class MFARecoveryRequest(BaseModel):
@@ -78,7 +78,7 @@ class UserProfile(BaseModel):
 
     id: str
     email: str
-    full_name: Optional[str] = None
+    full_name: str | None = None
     is_superuser: bool
     is_active: bool
     mfa_enabled: bool

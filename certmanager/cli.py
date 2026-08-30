@@ -9,8 +9,6 @@ Pattern follows entra-pentest's CLI structure:
 from __future__ import annotations
 
 import asyncio
-import sys
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -89,8 +87,9 @@ def migrate(
     """Run database migrations."""
     from pathlib import Path
 
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     # Resolve the alembic directory relative to this package, not the CWD
     project_root = Path(__file__).resolve().parent.parent
@@ -128,7 +127,7 @@ certs_app = typer.Typer(help="Certificate operations", no_args_is_help=True)
 app.add_typer(certs_app, name="certs")
 
 
-def _api_token(token: Optional[str]) -> str:
+def _api_token(token: str | None) -> str:
     """Resolve an API token from --token or CERTMGMT_CLI_TOKEN."""
     import os
 
@@ -142,7 +141,7 @@ def _api_token(token: Optional[str]) -> str:
     return resolved
 
 
-def _api_base(api_url: Optional[str]) -> str:
+def _api_base(api_url: str | None) -> str:
     from certmanager.core.config import get_settings
 
     return (api_url or f"http://localhost:{get_settings().api_port}").rstrip("/")
@@ -150,12 +149,12 @@ def _api_base(api_url: Optional[str]) -> str:
 
 @certs_app.command("list")
 def certs_list(
-    status: Optional[str] = typer.Option(None, help="Filter by status"),
-    expiring_in: Optional[int] = typer.Option(None, help="Expiring in N days"),
-    dc: Optional[str] = typer.Option(None, help="Filter by datacenter code"),
+    status: str | None = typer.Option(None, help="Filter by status"),
+    expiring_in: int | None = typer.Option(None, help="Expiring in N days"),
+    dc: str | None = typer.Option(None, help="Filter by datacenter code"),
     limit: int = typer.Option(50, help="Max results"),
-    api_url: Optional[str] = typer.Option(None, help="Central API URL"),
-    token: Optional[str] = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
+    api_url: str | None = typer.Option(None, help="Central API URL"),
+    token: str | None = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
 ):
     """List certificates via the API."""
     import httpx
@@ -178,7 +177,7 @@ def certs_list(
         resp.raise_for_status()
     except httpx.HTTPError as e:
         console.print(f"[red]API request failed: {e}[/]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     body = resp.json()
     items = body.get("items", [])
@@ -202,8 +201,8 @@ def certs_list(
 @certs_app.command("show")
 def certs_show(
     cert_id: str = typer.Argument(..., help="Certificate ID"),
-    api_url: Optional[str] = typer.Option(None, help="Central API URL"),
-    token: Optional[str] = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
+    api_url: str | None = typer.Option(None, help="Central API URL"),
+    token: str | None = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
 ):
     """Show certificate details via the API."""
     import httpx
@@ -217,7 +216,7 @@ def certs_show(
         resp.raise_for_status()
     except httpx.HTTPError as e:
         console.print(f"[red]API request failed: {e}[/]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     cert = resp.json().get("data", {})
     table = Table(title=f"Certificate {cert_id[:8]}")
@@ -239,8 +238,8 @@ app.add_typer(ca_app, name="ca")
 
 @ca_app.command("list")
 def ca_list(
-    api_url: Optional[str] = typer.Option(None, help="Central API URL"),
-    token: Optional[str] = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
+    api_url: str | None = typer.Option(None, help="Central API URL"),
+    token: str | None = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
 ):
     """List certificate authorities via the API."""
     import httpx
@@ -254,7 +253,7 @@ def ca_list(
         resp.raise_for_status()
     except httpx.HTTPError as e:
         console.print(f"[red]API request failed: {e}[/]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     authorities = resp.json().get("data", [])
     table = Table(title=f"Certificate Authorities ({len(authorities)})")
@@ -290,8 +289,8 @@ app.add_typer(scan_app, name="scan")
 @scan_app.command("run")
 def scan_run(
     scan_type: str = typer.Option("full_discovery", help="Scan type"),
-    api_url: Optional[str] = typer.Option(None, help="Central API URL"),
-    token: Optional[str] = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
+    api_url: str | None = typer.Option(None, help="Central API URL"),
+    token: str | None = typer.Option(None, help="API token (or CERTMGMT_CLI_TOKEN)"),
 ):
     """Run a discovery scan via the API."""
     import httpx
@@ -306,7 +305,7 @@ def scan_run(
         resp.raise_for_status()
     except httpx.HTTPError as e:
         console.print(f"[red]API request failed: {e}[/]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     data = resp.json().get("data", {})
     console.print(
@@ -332,8 +331,9 @@ def agent_init(
     config_path: str = typer.Option("agent_config.json", help="Config file path"),
 ):
     """Initialize agent configuration. Run once before starting the agent."""
-    from certmanager.agent.config import AgentSettings, save_agent_config
     import socket
+
+    from certmanager.agent.config import AgentSettings, save_agent_config
 
     settings = AgentSettings(
         api_url=url.rstrip("/"),
@@ -351,21 +351,30 @@ def agent_init(
     console.print(f"  DC:   {settings.datacenter_code or '(not set)'}")
     # Auto-detect platform and show install instructions
     import platform
+
     system = platform.system()
 
     console.print()
     console.print("[bold]Next steps:[/]")
 
     if system == "Windows":
-        console.print("  [bold]Windows Service:[/] deploy\\agent\\install.ps1 -ConfigPath agent_config.json")
+        console.print(
+            "  [bold]Windows Service:[/] deploy\\agent\\install.ps1 -ConfigPath agent_config.json"
+        )
         console.print("  [bold]Or run directly:[/] certmanager agent run")
     elif system == "Linux":
-        console.print("  [bold]systemd:[/] sudo cp deploy/agent/certmanager-agent.service /etc/systemd/system/")
-        console.print("  [bold]Docker:[/] docker run -v ./agent_config.json:/app/agent_config.json certmanager-agent")
+        console.print(
+            "  [bold]systemd:[/] sudo cp deploy/agent/certmanager-agent.service /etc/systemd/system/"
+        )
+        console.print(
+            "  [bold]Docker:[/] docker run -v ./agent_config.json:/app/agent_config.json certmanager-agent"
+        )
         console.print("  [bold]Or run directly:[/] certmanager agent run")
     else:
         console.print("  [bold]Run directly:[/] certmanager agent run")
-        console.print("  [bold]Docker:[/] docker run -v ./agent_config.json:/app/agent_config.json certmanager-agent")
+        console.print(
+            "  [bold]Docker:[/] docker run -v ./agent_config.json:/app/agent_config.json certmanager-agent"
+        )
 
     console.print("  [bold]Air-gap:[/] certmanager agent run-job <job-file>")
 
@@ -377,8 +386,9 @@ def agent_run(
 ):
     """Run the agent main loop (polling mode)."""
     import asyncio
-    from certmanager.agent.config import load_agent_config
+
     from certmanager.agent.agent import run_agent
+    from certmanager.agent.config import load_agent_config
 
     settings = load_agent_config(config_path)
 
@@ -389,7 +399,7 @@ def agent_run(
         settings.data_dir = str(data_path)
         settings.local_db_path = str(data_path / "agent.db")
 
-    console.print(f"[bold]Starting CertManager Agent[/]")
+    console.print("[bold]Starting CertManager Agent[/]")
     console.print(f"  Name: {settings.agent_name}")
     console.print(f"  Type: {settings.agent_type}")
     console.print(f"  API:  {settings.api_url}")
@@ -439,8 +449,9 @@ def agent_run_job(
     """Run a job from a JSON file and export results (air-gap mode)."""
     import asyncio
     from pathlib import Path
-    from certmanager.agent.config import load_agent_config
+
     from certmanager.agent.api_client import AgentAPIClient
+    from certmanager.agent.config import load_agent_config
 
     if not Path(job_file).exists():
         console.print(f"[red]Job file not found: {job_file}[/]")
@@ -530,13 +541,14 @@ def import_data(
         console.print("[red]Export file verification FAILED — file may be tampered.[/]")
         raise typer.Exit(1)
 
-    console.print(f"[green]Export file verified.[/]")
+    console.print("[green]Export file verified.[/]")
     console.print(f"  Agent: {payload.get('agent_name')}")
     console.print(f"  Exported: {payload.get('exported_at')}")
     console.print(f"  Results: {len(payload.get('results', []))}")
 
     # Submit each result to the central API via HTTP
     import asyncio
+
     import aiohttp
 
     api_base = _api_base(api_url)

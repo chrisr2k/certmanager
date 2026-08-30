@@ -12,15 +12,14 @@ Coordinates:
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from certmanager.connectors.factory import get_connector, CredentialStore
 from certmanager.connectors.base import CAHealthStatus
+from certmanager.connectors.factory import CredentialStore, get_connector
 from certmanager.core.models import CertificateAuthority, ScanJob
 from certmanager.services.certificate_service import CertificateService
 
@@ -40,7 +39,7 @@ class DiscoveryService:
     def __init__(
         self,
         db: AsyncSession,
-        credential_store: Optional[CredentialStore] = None,
+        credential_store: CredentialStore | None = None,
     ):
         self.db = db
         self.credential_store = credential_store or CredentialStore()
@@ -67,7 +66,7 @@ class DiscoveryService:
 
         # Mark job as running
         job.status = "running"
-        job.started_at = datetime.now(timezone.utc)
+        job.started_at = datetime.now(UTC)
         await self.db.flush()
 
         scope = job.scope_config or {}
@@ -76,9 +75,7 @@ class DiscoveryService:
         # If no specific CAs, scan all active CAs
         if not ca_ids:
             all_cas = await self.db.execute(
-                select(CertificateAuthority).where(
-                    CertificateAuthority.is_active == True
-                )
+                select(CertificateAuthority).where(CertificateAuthority.is_active)
             )
             ca_ids = [ca.id for ca in all_cas.scalars().all()]
 
@@ -109,7 +106,7 @@ class DiscoveryService:
 
         # Update job with final stats
         job.status = "completed"
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         job.total_checked = total_checked
         job.total_new = total_new
         job.total_updated = total_updated
@@ -139,7 +136,7 @@ class DiscoveryService:
         self,
         authority_id: str,
         scan_job_id: str,
-        scope: Optional[dict] = None,
+        scope: dict | None = None,
     ) -> dict:
         """Scan a single Certificate Authority and upsert its certificates.
 
@@ -153,9 +150,7 @@ class DiscoveryService:
         """
         # Load CA from database
         result = await self.db.execute(
-            select(CertificateAuthority).where(
-                CertificateAuthority.id == authority_id
-            )
+            select(CertificateAuthority).where(CertificateAuthority.id == authority_id)
         )
         authority = result.scalar_one_or_none()
 
@@ -173,7 +168,7 @@ class DiscoveryService:
 
         # Pre-scan health check
         health = await connector.health_check()
-        authority.last_scan_at = datetime.now(timezone.utc)
+        authority.last_scan_at = datetime.now(UTC)
         authority.health_status = health.status.value
 
         if health.status == CAHealthStatus.UNHEALTHY:
@@ -198,7 +193,6 @@ class DiscoveryService:
             raise
 
         # Upsert certificates
-        ca_scope = scope or {}
         upsert_stats = await self.cert_service.upsert_from_discovery(
             records=records,
             source_ca_id=authority_id,
@@ -209,9 +203,7 @@ class DiscoveryService:
 
         # Update CA health
         elapsed = (time.monotonic() - start) * 1000
-        authority.last_scan_status = (
-            "success" if upsert_stats["errors"] == 0 else "partial"
-        )
+        authority.last_scan_status = "success" if upsert_stats["errors"] == 0 else "partial"
         authority.last_error = None
         authority.health_status = "healthy"
         await self.db.flush()
@@ -239,9 +231,7 @@ class DiscoveryService:
             Dict mapping ca_id to health status.
         """
         result = await self.db.execute(
-            select(CertificateAuthority).where(
-                CertificateAuthority.is_active == True
-            )
+            select(CertificateAuthority).where(CertificateAuthority.is_active)
         )
         authorities = result.scalars().all()
 
@@ -251,7 +241,7 @@ class DiscoveryService:
                 connector = get_connector(authority, self.credential_store)
                 health = await connector.health_check()
                 authority.health_status = health.status.value
-                authority.last_scan_at = datetime.now(timezone.utc)
+                authority.last_scan_at = datetime.now(UTC)
                 health_results[authority.id] = health.status.value
             except Exception as e:
                 authority.health_status = "unhealthy"

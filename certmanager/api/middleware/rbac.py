@@ -20,7 +20,6 @@ Permission model:
 from __future__ import annotations
 
 import hashlib
-from typing import Set
 
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -35,7 +34,7 @@ logger = structlog.get_logger()
 # endpoints are listed — never the whole /api/v1/auth prefix, which would
 # wrongly expose /auth/me, /auth/logout, and MFA setup to anonymous callers
 # (and would also have matched /api/v1/authorities with naive prefix logic).
-PUBLIC_PATH_PREFIXES: Set[str] = {
+PUBLIC_PATH_PREFIXES: set[str] = {
     "/api/health",
     "/api/docs",
     "/api/redoc",
@@ -47,7 +46,7 @@ PUBLIC_PATH_PREFIXES: Set[str] = {
 }
 
 # Paths that use agent authentication (not user JWT)
-AGENT_PATH_PREFIXES: Set[str] = {
+AGENT_PATH_PREFIXES: set[str] = {
     "/api/v1/agents/",
 }
 
@@ -56,7 +55,7 @@ AGENT_PATH_PREFIXES: Set[str] = {
 # two can never drift.
 from certmanager.core.seed import ROLE_PERMISSIONS  # noqa: E402
 
-READ_PROTECTED_RESOURCES: Set[str] = {
+READ_PROTECTED_RESOURCES: set[str] = {
     resource
     for perms in ROLE_PERMISSIONS.values()
     for resource, action in perms
@@ -101,7 +100,10 @@ class RBACMiddleware(BaseHTTPMiddleware):
         if not auth_header or not auth_header.startswith("Bearer "):
             return JSONResponse(
                 status_code=401,
-                content={"error": "AuthenticationError", "message": "Missing or invalid Authorization header"},
+                content={
+                    "error": "AuthenticationError",
+                    "message": "Missing or invalid Authorization header",
+                },
             )
 
         token = auth_header[7:]  # Remove "Bearer " prefix
@@ -177,9 +179,7 @@ class RBACMiddleware(BaseHTTPMiddleware):
 
         factory = get_session_factory()
         async with factory() as db:
-            result = await db.execute(
-                select(APIKey).where(APIKey.key_hash == key_hash)
-            )
+            result = await db.execute(select(APIKey).where(APIKey.key_hash == key_hash))
             key = result.scalar_one_or_none()
 
             if key is None or not key.is_active:

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, UTC
-from typing import Optional
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -12,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from certmanager.api.dependencies import get_current_active_user, get_db
 from certmanager.core.exceptions import NotFoundError
-from certmanager.core.models import AlertEvent, AlertRule, AlertRuleChannel, NotificationChannel, User
+from certmanager.core.models import (
+    AlertEvent,
+    AlertRule,
+    AlertRuleChannel,
+    NotificationChannel,
+    User,
+)
 
 router = APIRouter()
 
@@ -24,23 +29,23 @@ class AlertRuleCreate(BaseModel):
     condition_type: str
     condition_config: dict
     severity: str = "warning"
-    description: Optional[str] = None
-    scope_filter: Optional[dict] = None
+    description: str | None = None
+    scope_filter: dict | None = None
     cooldown_minutes: int = 60
     is_enabled: bool = True
-    channel_ids: Optional[list[str]] = None
+    channel_ids: list[str] | None = None
 
 
 class AlertRuleUpdate(BaseModel):
     """Body for updating an alert rule — all fields optional."""
 
-    name: Optional[str] = None
-    description: Optional[str] = None
-    is_enabled: Optional[bool] = None
-    condition_config: Optional[dict] = None
-    severity: Optional[str] = None
-    cooldown_minutes: Optional[int] = None
-    scope_filter: Optional[dict] = None
+    name: str | None = None
+    description: str | None = None
+    is_enabled: bool | None = None
+    condition_config: dict | None = None
+    severity: str | None = None
+    cooldown_minutes: int | None = None
+    scope_filter: dict | None = None
 
 
 class ChannelCreate(BaseModel):
@@ -53,10 +58,11 @@ class ChannelCreate(BaseModel):
 
 # --- Alert Rules ---
 
+
 @router.get("/rules")
 async def list_alert_rules(
-    is_enabled: Optional[bool] = Query(default=None),
-    severity: Optional[str] = Query(default=None),
+    is_enabled: bool | None = Query(default=None),
+    severity: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -173,12 +179,13 @@ async def delete_alert_rule(
 
 # --- Alert Events ---
 
+
 @router.get("/events")
 async def list_alert_events(
-    rule_id: Optional[str] = Query(default=None),
-    cert_id: Optional[str] = Query(default=None),
-    is_acknowledged: Optional[bool] = Query(default=None),
-    severity: Optional[str] = Query(default=None),
+    rule_id: str | None = Query(default=None),
+    cert_id: str | None = Query(default=None),
+    is_acknowledged: bool | None = Query(default=None),
+    severity: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
     db: AsyncSession = Depends(get_db),
@@ -247,9 +254,10 @@ async def acknowledge_alert(
 
 # --- Notification Channels ---
 
+
 @router.get("/channels")
 async def list_channels(
-    channel_type: Optional[str] = Query(default=None),
+    channel_type: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -306,7 +314,7 @@ async def test_channel(
     if not channel:
         raise NotFoundError(f"Channel {channel_id} not found")
 
-    from certmanager.notifications.base import NotificationMessage, get_dispatcher
+    from certmanager.notifications.base import get_dispatcher
 
     dispatcher = get_dispatcher()
     backend = dispatcher.get_backend(channel.channel_type)

@@ -18,8 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 import structlog
 
@@ -28,7 +27,6 @@ from certmanager.connectors.base import (
     CAHealthResult,
     CAHealthStatus,
     CertificateRecord,
-    ConnectorAuthError,
     ConnectorError,
     IssueRequest,
     IssueResult,
@@ -52,9 +50,9 @@ class AzureKeyVaultConnector(CAConnector):
     def __init__(
         self,
         vault_url: str,
-        tenant_id: Optional[str] = None,
-        client_id: Optional[str] = None,
-        client_secret: Optional[str] = None,
+        tenant_id: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
     ):
         """Initialize the Azure Key Vault connector.
 
@@ -68,7 +66,9 @@ class AzureKeyVaultConnector(CAConnector):
         self.tenant_id = tenant_id
         self.client_id = client_id
         self.client_secret = client_secret
-        self._vault_name = self.vault_url.split("//")[1].split(".")[0] if "//" in vault_url else vault_url
+        self._vault_name = (
+            self.vault_url.split("//")[1].split(".")[0] if "//" in vault_url else vault_url
+        )
 
     def _get_credential(self):
         """Get Azure credential using DefaultAzureCredential chain."""
@@ -76,6 +76,7 @@ class AzureKeyVaultConnector(CAConnector):
 
         if self.client_id and self.client_secret and self.tenant_id:
             from azure.identity import ClientSecretCredential
+
             return ClientSecretCredential(
                 tenant_id=self.tenant_id,
                 client_id=self.client_id,
@@ -123,7 +124,10 @@ class AzureKeyVaultConnector(CAConnector):
             latency_ms = (time.monotonic() - start) * 1000
             error_str = str(e)
 
-            if "AuthenticationError" in str(type(e).__name__) or "unauthorized" in error_str.lower():
+            if (
+                "AuthenticationError" in str(type(e).__name__)
+                or "unauthorized" in error_str.lower()
+            ):
                 status = CAHealthStatus.UNHEALTHY
                 message = f"Key Vault authentication failed for {self._vault_name}"
             else:
@@ -137,9 +141,7 @@ class AzureKeyVaultConnector(CAConnector):
                 detail={"error": error_str},
             )
 
-    async def discover_certificates(
-        self, scope: Optional[dict] = None
-    ) -> List[CertificateRecord]:
+    async def discover_certificates(self, scope: dict | None = None) -> list[CertificateRecord]:
         """Discover all certificates in the configured Key Vault.
 
         Iterates through all certificate versions and collects metadata.
@@ -153,11 +155,11 @@ class AzureKeyVaultConnector(CAConnector):
         """
         import asyncio
 
-        records: List[CertificateRecord] = []
+        records: list[CertificateRecord] = []
 
-        def _discover() -> List[CertificateRecord]:
+        def _discover() -> list[CertificateRecord]:
             client = self._get_cert_client()
-            found: List[CertificateRecord] = []
+            found: list[CertificateRecord] = []
             # List all certificates
             for cert_props in client.list_properties_of_certificates():
                 try:
@@ -179,7 +181,7 @@ class AzureKeyVaultConnector(CAConnector):
             # The Azure SDK is synchronous — run it off the event loop
             records = await asyncio.to_thread(_discover)
         except Exception as e:
-            raise ConnectorError(f"Key Vault discovery failed: {e}")
+            raise ConnectorError(f"Key Vault discovery failed: {e}") from e
 
         logger.info(
             "azure_discovery_complete",
@@ -196,7 +198,6 @@ class AzureKeyVaultConnector(CAConnector):
         - policy: key size, key type, subject, validity, SANs, issuers
         - cer: X.509 certificate bytes (public key only)
         """
-        from azure.keyvault.certificates import CertificateContentType
 
         props = certificate.properties
         policy = certificate.policy
@@ -206,16 +207,18 @@ class AzureKeyVaultConnector(CAConnector):
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes
 
-        cert_id = certificate.id or f"{self.vault_url}/certificates/{certificate.name}/{props.version}"
+        cert_id = (
+            certificate.id or f"{self.vault_url}/certificates/{certificate.name}/{props.version}"
+        )
         subject_str = policy.subject if policy else "Unknown"
         issuer_str = policy.issuer_name if policy and policy.issuer_name else "Unknown"
         serial_number = ""
         thumbprint = props.x509_thumbprint.hex() if props.x509_thumbprint else ""
-        not_before = datetime.min.replace(tzinfo=timezone.utc)
-        not_after = datetime.max.replace(tzinfo=timezone.utc)
+        not_before = datetime.min.replace(tzinfo=UTC)
+        not_after = datetime.max.replace(tzinfo=UTC)
         key_algorithm = "unknown"
         signature_algorithm = "unknown"
-        sans: List[str] = []
+        sans: list[str] = []
         is_ca = False
 
         if x509_bytes:
@@ -235,9 +238,7 @@ class AzureKeyVaultConnector(CAConnector):
 
                 # SANs
                 try:
-                    san_ext = cert.extensions.get_extension_for_class(
-                        x509.SubjectAlternativeName
-                    )
+                    san_ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
                     sans = san_ext.value.get_values_for_type(x509.DNSName)
                 except x509.ExtensionNotFound:
                     pass
@@ -263,7 +264,7 @@ class AzureKeyVaultConnector(CAConnector):
             status = "revoked"
 
         # Check expiry
-        if not_after < datetime.now(timezone.utc):
+        if not_after < datetime.now(UTC):
             status = "expired"
 
         # Determine cert type
@@ -271,7 +272,9 @@ class AzureKeyVaultConnector(CAConnector):
         if is_ca:
             cert_type = "ca"
 
-        validity_days = int((not_after - not_before).total_seconds() / 86400) if not_before and not_after else 0
+        validity_days = (
+            int((not_after - not_before).total_seconds() / 86400) if not_before and not_after else 0
+        )
 
         return CertificateRecord(
             common_name=certificate.name,
@@ -300,7 +303,7 @@ class AzureKeyVaultConnector(CAConnector):
             status=status,
         )
 
-    async def get_certificate(self, source_id: str) -> Optional[CertificateRecord]:
+    async def get_certificate(self, source_id: str) -> CertificateRecord | None:
         """Get a single certificate by its Azure Key Vault certificate ID."""
         client = self._get_cert_client()
 
@@ -313,7 +316,7 @@ class AzureKeyVaultConnector(CAConnector):
         except Exception as e:
             if "not found" in str(e).lower() or "404" in str(e):
                 return None
-            raise ConnectorError(f"Failed to get certificate: {e}")
+            raise ConnectorError(f"Failed to get certificate: {e}") from e
 
     async def issue_certificate(self, request: IssueRequest) -> IssueResult:
         """Issue a new certificate via Azure Key Vault.
@@ -324,13 +327,13 @@ class AzureKeyVaultConnector(CAConnector):
         Note: Azure manages the private key internally. Export depends on
         the certificate policy's exportable setting.
         """
+        import asyncio
+
         from azure.keyvault.certificates import (
-            CertificatePolicy,
             CertificateContentType,
+            CertificatePolicy,
             WellKnownIssuerNames,
         )
-
-        import asyncio
 
         def _issue():
             client = self._get_cert_client()
@@ -358,7 +361,6 @@ class AzureKeyVaultConnector(CAConnector):
         # The Azure SDK is synchronous — run it off the event loop
         certificate = await asyncio.to_thread(_issue)
 
-        cert_id = certificate.id or f"{self.vault_url}/certificates/{request.common_name}"
         record = self._parse_certificate(certificate)
 
         return IssueResult(
@@ -390,11 +392,9 @@ class AzureKeyVaultConnector(CAConnector):
             record = self._parse_certificate(certificate)
             return IssueResult(certificate=record, private_key_pem=None)
         except Exception as e:
-            raise ConnectorError(f"Certificate renewal failed: {e}")
+            raise ConnectorError(f"Certificate renewal failed: {e}") from e
 
-    async def revoke_certificate(
-        self, source_id: str, reason: str = "unspecified"
-    ) -> bool:
+    async def revoke_certificate(self, source_id: str, reason: str = "unspecified") -> bool:
         """Disable a certificate in Key Vault (Azure doesn't have CRL-based revocation).
 
         Sets the certificate to disabled state.
@@ -414,9 +414,9 @@ class AzureKeyVaultConnector(CAConnector):
             await asyncio.to_thread(_disable)
             return True
         except Exception as e:
-            raise ConnectorError(f"Certificate disable failed: {e}")
+            raise ConnectorError(f"Certificate disable failed: {e}") from e
 
-    async def get_certificate_chain(self, source_id: str) -> List[CertificateRecord]:
+    async def get_certificate_chain(self, source_id: str) -> list[CertificateRecord]:
         """Get the certificate chain. Key Vault returns only the leaf certificate."""
         # Key Vault doesn't expose chains directly — the chain is assembled
         # by the client during TLS. Return an empty list for now.

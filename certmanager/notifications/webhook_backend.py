@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import structlog
+
 from certmanager.notifications.base import NotificationBackend, NotificationMessage
 
 logger = structlog.get_logger()
@@ -42,6 +43,7 @@ class WebhookBackend(NotificationBackend):
             # Build payload
             if config.get("template") == "custom" and config.get("custom_payload"):
                 import json
+
                 payload = json.loads(
                     json.dumps(config["custom_payload"])
                     .replace("{{title}}", message.title)
@@ -65,11 +67,16 @@ class WebhookBackend(NotificationBackend):
 
             async with aiohttp.ClientSession() as session:
                 async with session.request(
-                    method, url, json=payload, headers=headers,
+                    method,
+                    url,
+                    json=payload,
+                    headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status < 500:
-                        logger.info("webhook_sent", url=url, status=resp.status, title=message.title)
+                        logger.info(
+                            "webhook_sent", url=url, status=resp.status, title=message.title
+                        )
                         return True
                     else:
                         body = await resp.text()

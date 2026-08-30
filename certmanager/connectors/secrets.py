@@ -12,7 +12,6 @@ storage format is self-describing and idempotent.
 from __future__ import annotations
 
 import base64
-import json
 
 import structlog
 

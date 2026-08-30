@@ -13,10 +13,9 @@ import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,33 +39,35 @@ SENSITIVE_PSK_HINT = "[REDACTED]"
 
 # --- Request bodies ---
 
+
 class AgentRegisterRequest(BaseModel):
     """Agent registration payload (PSK handshake)."""
 
     name: str
     agent_type: str
     datacenter_code: str
-    hostname: Optional[str] = None
-    psk: Optional[str] = None
+    hostname: str | None = None
+    psk: str | None = None
 
 
 class ScanTargetsUpdate(BaseModel):
     """Body for updating an agent's TLS scan targets."""
 
-    cidr_ranges: Optional[list[str]] = None
-    ports: Optional[list[int]] = None
-    exclude_cidrs: Optional[list[str]] = None
-    scan_schedule: Optional[str] = None
+    cidr_ranges: list[str] | None = None
+    ports: list[int] | None = None
+    exclude_cidrs: list[str] | None = None
+    scan_schedule: str | None = None
 
 
 class TLSScanRequest(BaseModel):
     """Body for triggering a manual TLS scan on an agent."""
 
-    cidr_ranges: Optional[list[str]] = None
-    ports: Optional[list[int]] = None
+    cidr_ranges: list[str] | None = None
+    ports: list[int] | None = None
 
 
 # --- Helpers ---
+
 
 async def _require_agent(
     request: Request,
@@ -100,6 +101,7 @@ async def _require_agent(
 
 # --- Agent registration (uses PSK, not user JWT) ---
 
+
 @router.post("/register", status_code=201)
 async def register_agent(
     request: Request,
@@ -119,15 +121,11 @@ async def register_agent(
 
     # Constant-time PSK comparison
     expected_psk = settings.agent.psk
-    if not expected_psk or body.psk is None or not hmac.compare_digest(
-        expected_psk, body.psk
-    ):
+    if not expected_psk or body.psk is None or not hmac.compare_digest(expected_psk, body.psk):
         raise AgentRegistrationError("Invalid pre-shared key")
 
     # Find datacenter by code
-    dc_result = await db.execute(
-        select(Datacenter).where(Datacenter.code == body.datacenter_code)
-    )
+    dc_result = await db.execute(select(Datacenter).where(Datacenter.code == body.datacenter_code))
     datacenter = dc_result.scalar_one_or_none()
     if not datacenter:
         raise AgentRegistrationError(
@@ -138,7 +136,7 @@ async def register_agent(
     existing_result = await db.execute(select(Agent).where(Agent.name == body.name))
     agent = existing_result.scalar_one_or_none()
 
-    agent_token: Optional[str] = None  # returned only on FIRST registration
+    agent_token: str | None = None  # returned only on FIRST registration
 
     if agent is None:
         agent_token = secrets.token_urlsafe(32)
@@ -193,12 +191,15 @@ async def register_agent(
         # Return the permanent agent token ONCE — the agent stores it for
         # the connector listener; only a hash is kept server-side.
         response["agent_token"] = agent_token
-        response["message"] = "Agent registered. Store the agent_token — it will not be shown again."
+        response["message"] = (
+            "Agent registered. Store the agent_token — it will not be shown again."
+        )
 
     return {"data": response}
 
 
 # --- Agent heartbeat ---
+
 
 @router.post("/{agent_id}/heartbeat")
 async def agent_heartbeat(
@@ -228,6 +229,7 @@ async def agent_heartbeat(
 
 
 # --- Agent job polling ---
+
 
 @router.get("/{agent_id}/jobs")
 async def fetch_agent_jobs(
@@ -266,6 +268,7 @@ async def fetch_agent_jobs(
 
 # --- Agent job result submission ---
 
+
 @router.post("/{agent_id}/jobs/{job_id}/result")
 async def submit_job_result(
     agent_id: str,
@@ -298,7 +301,6 @@ async def submit_job_result(
     cert_dicts = result_data.get("certificates", [])
     upsert_stats = {"new": 0, "updated": 0, "unchanged": 0, "errors": 0}
     if cert_dicts:
-        from certmanager.connectors.base import CertificateRecord
         from certmanager.services.certificate_service import CertificateService
 
         records = [_certificate_record_from_agent_data(d) for d in cert_dicts]
@@ -393,11 +395,12 @@ def _certificate_record_from_agent_data(data: dict):
 
 # --- Admin agent management ---
 
+
 @router.get("")
 async def list_agents(
-    status: Optional[str] = None,
-    agent_type: Optional[str] = None,
-    dc_id: Optional[str] = None,
+    status: str | None = None,
+    agent_type: str | None = None,
+    dc_id: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -425,7 +428,9 @@ async def list_agents(
                 "version": a.version,
                 "status": a.status,
                 "is_approved": a.is_approved,
-                "last_heartbeat_at": a.last_heartbeat_at.isoformat() if a.last_heartbeat_at else None,
+                "last_heartbeat_at": a.last_heartbeat_at.isoformat()
+                if a.last_heartbeat_at
+                else None,
             }
             for a in agents
         ]
@@ -467,6 +472,7 @@ async def delete_agent(
 
 
 # --- TLS Scan Target Management ---
+
 
 @router.get("/{agent_id}/scan-targets")
 async def get_scan_targets(

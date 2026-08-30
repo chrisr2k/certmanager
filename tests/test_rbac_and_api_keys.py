@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import hashlib
 
-import pytest
-import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +21,7 @@ from certmanager.api.middleware.rbac import (
     _path_is_public,
 )
 from certmanager.core.models import APIKey
-from tests.conftest import ADMIN_EMAIL, ADMIN_PASSWORD
+from tests.conftest import ADMIN_EMAIL
 
 
 class TestPermissionLogic:
@@ -59,10 +57,12 @@ class TestPermissionLogic:
 
 
 class TestReadEnforcement:
-    async def test_non_admin_cannot_read_audit_logs(self, client: AsyncClient, seeded_db: AsyncSession):
+    async def test_non_admin_cannot_read_audit_logs(
+        self, client: AsyncClient, seeded_db: AsyncSession
+    ):
         # Create a plain user with the viewer role (no audit_logs:read)
-        from certmanager.core.security import hash_password
         from certmanager.core.models import Role, User, UserRole
+        from certmanager.core.security import hash_password
 
         viewer_role = (
             await seeded_db.execute(select(Role).where(Role.name == "viewer"))
@@ -87,8 +87,8 @@ class TestReadEnforcement:
         assert resp.status_code == 403
 
     async def test_viewer_can_read_certificates(self, client: AsyncClient, seeded_db: AsyncSession):
-        from certmanager.core.security import hash_password
         from certmanager.core.models import Role, User, UserRole
+        from certmanager.core.security import hash_password
 
         viewer_role = (
             await seeded_db.execute(select(Role).where(Role.name == "viewer"))
@@ -135,15 +135,11 @@ class TestAPIKeys:
         assert api_key, create.text
 
         # Authenticate with X-API-Key
-        resp = await client.get(
-            "/api/v1/certificates", headers={"X-API-Key": api_key}
-        )
+        resp = await client.get("/api/v1/certificates", headers={"X-API-Key": api_key})
         assert resp.status_code == 200, resp.text
 
         # Wrong key → 401
-        resp = await client.get(
-            "/api/v1/certificates", headers={"X-API-Key": "wrong-key"}
-        )
+        resp = await client.get("/api/v1/certificates", headers={"X-API-Key": "wrong-key"})
         assert resp.status_code == 401
 
         # last_used_at updated
@@ -178,13 +174,9 @@ class TestAPIKeys:
 
         # Allowed scope: alerts read (unseeded read → hmm, alerts IS seeded;
         # alerts:read matches) — alerts:read in scopes → pass
-        resp = await client.get(
-            "/api/v1/alerts/rules", headers={"X-API-Key": plain_key}
-        )
+        resp = await client.get("/api/v1/alerts/rules", headers={"X-API-Key": plain_key})
         assert resp.status_code == 200, resp.text
 
         # Required permission not in scopes → 403
-        resp = await client.get(
-            "/api/v1/certificates", headers={"X-API-Key": plain_key}
-        )
+        resp = await client.get("/api/v1/certificates", headers={"X-API-Key": plain_key})
         assert resp.status_code == 403

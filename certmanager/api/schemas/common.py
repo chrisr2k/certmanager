@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Generic, Optional, TypeVar
+from typing import TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -29,18 +29,18 @@ class PaginationMeta(BaseModel):
 class ErrorDetail(BaseModel):
     """A single error in a validation or error response."""
 
-    field: Optional[str] = None
+    field: str | None = None
     message: str
-    code: Optional[str] = None
+    code: str | None = None
 
 
-class APIResponse(BaseModel, Generic[T]):
+class APIResponse[T](BaseModel):
     """Standard API response envelope."""
 
-    data: Optional[T] = None
-    meta: Optional[PaginationMeta] = None
-    errors: Optional[list[ErrorDetail]] = None
-    correlation_id: Optional[str] = None
+    data: T | None = None
+    meta: PaginationMeta | None = None
+    errors: list[ErrorDetail] | None = None
+    correlation_id: str | None = None
 
 
 class TimestampedSchema(BaseModel):

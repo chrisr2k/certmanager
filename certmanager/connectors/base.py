@@ -16,14 +16,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import List, Optional
+from enum import StrEnum
 
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
-class CAHealthStatus(str, Enum):
+class CAHealthStatus(StrEnum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
@@ -47,16 +46,16 @@ class CertificateRecord:
     thumbprint_sha256: str
     not_before: datetime
     not_after: datetime
-    validity_days: Optional[int] = None  # computed as (not_after - not_before) when omitted
+    validity_days: int | None = None  # computed as (not_after - not_before) when omitted
     key_algorithm: str = "unknown"
     signature_algorithm: str = "unknown"
-    sans: List[str] = field(default_factory=list)
+    sans: list[str] = field(default_factory=list)
     cert_type: str = "unknown"  # server | client | ca | code_signing
     is_wildcard: bool = False
     is_ca: bool = False
     source_detail: dict = field(default_factory=dict)
     source_id: str = ""  # AWS ARN, Azure cert ID, AD CS request ID
-    chain_certs: List["CertificateRecord"] = field(default_factory=list)
+    chain_certs: list[CertificateRecord] = field(default_factory=list)
     status: str = "active"
 
 
@@ -75,7 +74,7 @@ class IssueRequest:
     """Request to issue a new certificate."""
 
     common_name: str
-    sans: List[str] = field(default_factory=list)
+    sans: list[str] = field(default_factory=list)
     key_algorithm: str = "RSA-2048"
     validity_days: int = 365
     cert_type: str = "server"
@@ -90,8 +89,8 @@ class IssueResult:
     """
 
     certificate: CertificateRecord
-    private_key_pem: Optional[str] = None
-    password: Optional[str] = None
+    private_key_pem: str | None = None
+    password: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +147,7 @@ class CAConnector(ABC):
         """
 
     @abstractmethod
-    async def discover_certificates(
-        self, scope: Optional[dict] = None
-    ) -> List[CertificateRecord]:
+    async def discover_certificates(self, scope: dict | None = None) -> list[CertificateRecord]:
         """Discover all certificates managed by this CA.
 
         Args:
@@ -164,7 +161,7 @@ class CAConnector(ABC):
         """
 
     @abstractmethod
-    async def get_certificate(self, source_id: str) -> Optional[CertificateRecord]:
+    async def get_certificate(self, source_id: str) -> CertificateRecord | None:
         """Retrieve a single certificate by its source-native identifier."""
 
     @abstractmethod
@@ -193,9 +190,7 @@ class CAConnector(ABC):
         """
 
     @abstractmethod
-    async def revoke_certificate(
-        self, source_id: str, reason: str = "unspecified"
-    ) -> bool:
+    async def revoke_certificate(self, source_id: str, reason: str = "unspecified") -> bool:
         """Revoke a certificate.
 
         Args:
@@ -209,9 +204,7 @@ class CAConnector(ABC):
         """
 
     @abstractmethod
-    async def get_certificate_chain(
-        self, source_id: str
-    ) -> List[CertificateRecord]:
+    async def get_certificate_chain(self, source_id: str) -> list[CertificateRecord]:
         """Retrieve the full certificate chain (leaf + intermediates).
 
         Args:
@@ -227,4 +220,4 @@ class CAConnector(ABC):
         Raises:
             ConnectorConfigError if configuration is invalid.
         """
-        pass  # Override in subclasses if needed
+        return None  # Override in subclasses if needed

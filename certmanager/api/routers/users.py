@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from certmanager.api.dependencies import get_current_active_user, get_db, require_superuser
+from certmanager.api.dependencies import get_db, require_superuser
 from certmanager.core.exceptions import ConflictError, NotFoundError
 from certmanager.core.models import Role, User, UserRole
 from certmanager.core.security import hash_password
@@ -23,22 +21,22 @@ class UserCreate(BaseModel):
 
     email: str
     password: str
-    full_name: Optional[str] = None
+    full_name: str | None = None
     is_superuser: bool = False
-    role_ids: Optional[list[str]] = None
+    role_ids: list[str] | None = None
 
 
 class UserUpdate(BaseModel):
     """Body for updating a user — all fields optional."""
 
-    full_name: Optional[str] = None
-    is_active: Optional[bool] = None
-    is_superuser: Optional[bool] = None
+    full_name: str | None = None
+    is_active: bool | None = None
+    is_superuser: bool | None = None
 
 
 @router.get("")
 async def list_users(
-    is_active: Optional[bool] = Query(default=None),
+    is_active: bool | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
     db: AsyncSession = Depends(get_db),
@@ -211,6 +209,6 @@ async def remove_role(
     )
     mapping = result.scalar_one_or_none()
     if not mapping:
-        raise NotFoundError(f"Role assignment not found")
+        raise NotFoundError("Role assignment not found")
     await db.delete(mapping)
     await db.flush()

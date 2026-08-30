@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from certmanager.core import security
-from certmanager.core.config import reload_settings
 from certmanager.connectors.secrets import (
     decrypt_sensitive_values,
     encrypt_sensitive_values,
     redact_for_display,
 )
+from certmanager.core import security
+from certmanager.core.config import reload_settings
 
 
 class TestPasswordHashing:

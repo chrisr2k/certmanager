@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, UTC
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from certmanager.api.dependencies import get_current_active_user, get_db
@@ -14,10 +13,9 @@ from certmanager.api.schemas.certificates import (
     CertificateCreate,
     CertificateListResponse,
     CertificateResponse,
-    CertStats,
     CertificateUpdate,
+    CertStats,
 )
-from certmanager.api.schemas.common import PaginationParams
 from certmanager.core.exceptions import NotFoundError
 from certmanager.core.models import Certificate, User
 
@@ -26,14 +24,14 @@ router = APIRouter()
 
 @router.get("", response_model=CertificateListResponse)
 async def list_certificates(
-    q: Optional[str] = Query(default=None, description="Full-text search query"),
-    status: Optional[str] = Query(default=None, description="Filter by status"),
-    cert_type: Optional[str] = Query(default=None, description="Filter by cert type"),
-    source_type: Optional[str] = Query(default=None, description="Filter by source"),
-    dc_id: Optional[str] = Query(default=None, description="Filter by datacenter"),
-    ca_id: Optional[str] = Query(default=None, description="Filter by CA"),
-    expiring_in_days: Optional[int] = Query(default=None, description="Expiring within N days"),
-    owner: Optional[str] = Query(default=None, description="Filter by owner"),
+    q: str | None = Query(default=None, description="Full-text search query"),
+    status: str | None = Query(default=None, description="Filter by status"),
+    cert_type: str | None = Query(default=None, description="Filter by cert type"),
+    source_type: str | None = Query(default=None, description="Filter by source"),
+    dc_id: str | None = Query(default=None, description="Filter by datacenter"),
+    ca_id: str | None = Query(default=None, description="Filter by CA"),
+    expiring_in_days: int | None = Query(default=None, description="Expiring within N days"),
+    owner: str | None = Query(default=None, description="Filter by owner"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
     sort_by: str = Query(default="not_after"),
@@ -168,9 +166,7 @@ async def certificate_stats(
 
     # By cert type
     type_result = await db.execute(
-        select(Certificate.cert_type, func.count(Certificate.id)).group_by(
-            Certificate.cert_type
-        )
+        select(Certificate.cert_type, func.count(Certificate.id)).group_by(Certificate.cert_type)
     )
     by_cert_type = {ct if ct else "unknown": count for ct, count in type_result.all()}
 

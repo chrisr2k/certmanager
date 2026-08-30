@@ -16,8 +16,7 @@ Features:
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import select
@@ -32,7 +31,6 @@ from certmanager.core.models import (
     NotificationChannel,
 )
 from certmanager.notifications.base import (
-    NotificationDispatcher,
     NotificationMessage,
     get_dispatcher,
 )
@@ -55,9 +53,7 @@ class AlertingService:
         Returns:
             Dict with {evaluated, triggered, errors} counts.
         """
-        result = await self.db.execute(
-            select(AlertRule).where(AlertRule.is_enabled == True)
-        )
+        result = await self.db.execute(select(AlertRule).where(AlertRule.is_enabled))
         rules = result.scalars().all()
 
         stats = {"evaluated": 0, "triggered": 0, "errors": 0}
@@ -121,15 +117,13 @@ class AlertingService:
 
     # --- Condition checkers ---
 
-    async def _check_expiry_days(
-        self, config: dict, scope_filter: dict
-    ) -> list[dict]:
+    async def _check_expiry_days(self, config: dict, scope_filter: dict) -> list[dict]:
         """Check for certificates expiring within configured days.
 
         Config: {"days": 30} — fire when cert expires within 30 days.
         """
         days = config.get("days", 30)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now + timedelta(days=days)
 
         query = (
@@ -157,9 +151,7 @@ class AlertingService:
             for c in certs
         ]
 
-    async def _check_issuer_match(
-        self, config: dict, scope_filter: dict
-    ) -> list[dict]:
+    async def _check_issuer_match(self, config: dict, scope_filter: dict) -> list[dict]:
         """Check for certificates matching an issuer pattern.
 
         Config: {"issuer_pattern": "CN=Test CA.*"} — regex pattern (can also be simple substring).
@@ -168,9 +160,7 @@ class AlertingService:
         if not pattern:
             return []
 
-        query = select(Certificate).where(
-            Certificate.status == "active"
-        )
+        query = select(Certificate).where(Certificate.status == "active")
 
         # Try as regex first, fall back to LIKE
         try:
@@ -194,16 +184,14 @@ class AlertingService:
             for c in certs
         ]
 
-    async def _check_status_change(
-        self, config: dict, scope_filter: dict
-    ) -> list[dict]:
+    async def _check_status_change(self, config: dict, scope_filter: dict) -> list[dict]:
         """Check for certificates that recently changed to a specified status.
 
         Config: {"status": "expired", "within_hours": 24}
         """
         target_status = config.get("status", "expired")
         within_hours = config.get("within_hours", 24)
-        since = datetime.now(timezone.utc) - timedelta(hours=within_hours)
+        since = datetime.now(UTC) - timedelta(hours=within_hours)
 
         query = (
             select(Certificate)
@@ -228,9 +216,7 @@ class AlertingService:
             for c in certs
         ]
 
-    async def _check_ca_health(
-        self, config: dict, scope_filter: dict
-    ) -> list[dict]:
+    async def _check_ca_health(self, config: dict, scope_filter: dict) -> list[dict]:
         """Check for CAs that have become unhealthy or degraded.
 
         Config: {"health_status": "unhealthy"} or {"health_status": "degraded"}
@@ -238,7 +224,7 @@ class AlertingService:
         target = config.get("health_status", "unhealthy")
 
         query = select(CertificateAuthority).where(
-            CertificateAuthority.is_active == True,
+            CertificateAuthority.is_active,
             CertificateAuthority.health_status == target,
         )
 
@@ -298,9 +284,7 @@ class AlertingService:
 
     async def _check_cooldown_async(self, rule: AlertRule) -> bool:
         """Async cooldown check — queries the database."""
-        since = datetime.now(timezone.utc) - timedelta(
-            minutes=rule.cooldown_minutes
-        )
+        since = datetime.now(UTC) - timedelta(minutes=rule.cooldown_minutes)
 
         result = await self.db.execute(
             select(AlertEvent)
@@ -368,14 +352,12 @@ class AlertingService:
             cert_id=cert_id,
             cert_common_name=match.get("common_name"),
             action_url=action_url,
-            metadata={"timestamp": datetime.now(timezone.utc).isoformat()},
+            metadata={"timestamp": datetime.now(UTC).isoformat()},
         )
 
         # Get channels for this rule
         channels_result = await self.db.execute(
-            select(AlertRuleChannel).where(
-                AlertRuleChannel.alert_rule_id == str(rule.id)
-            )
+            select(AlertRuleChannel).where(AlertRuleChannel.alert_rule_id == str(rule.id))
         )
         rule_channels = channels_result.scalars().all()
 
@@ -396,9 +378,7 @@ class AlertingService:
             nc_id = channel_config.get("notification_channel_id")
             if nc_id:
                 nc_result = await self.db.execute(
-                    select(NotificationChannel).where(
-                        NotificationChannel.id == nc_id
-                    )
+                    select(NotificationChannel).where(NotificationChannel.id == nc_id)
                 )
                 nc = nc_result.scalar_one_or_none()
                 if nc:

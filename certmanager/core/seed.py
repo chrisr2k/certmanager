@@ -145,9 +145,7 @@ async def seed_admin_user(db: AsyncSession, email: str = None, password: str = N
 
     if admin_role:
         existing = await db.execute(
-            select(UserRole).where(
-                UserRole.user_id == user.id, UserRole.role_id == admin_role.id
-            )
+            select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == admin_role.id)
         )
         if not existing.scalar_one_or_none():
             db.add(UserRole(user_id=user.id, role_id=admin_role.id))
@@ -170,7 +168,5 @@ async def seed_all(
     return {
         "roles_created": list(roles.keys()),
         "admin_user": admin.email,
-        "permissions_total": sum(
-            len(perms) for perms in ROLE_PERMISSIONS.values()
-        ),
+        "permissions_total": sum(len(perms) for perms in ROLE_PERMISSIONS.values()),
     }

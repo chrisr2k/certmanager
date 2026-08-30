@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -22,15 +20,17 @@ VALID_FORMATS = {"pdf", "csv", "json"}
 class ReportRequest(BaseModel):
     """Body for requesting a compliance report."""
 
-    report_type: str = Field(description="expiry_summary | full_inventory | change_report | audit_export")
-    parameters: Optional[dict] = None
+    report_type: str = Field(
+        description="expiry_summary | full_inventory | change_report | audit_export"
+    )
+    parameters: dict | None = None
     file_format: str = Field(default="pdf")
 
 
 @router.get("")
 async def list_reports(
-    report_type: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
+    report_type: str | None = Query(default=None),
+    status: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -102,7 +102,10 @@ async def request_report(
         generate_report.delay(str(report.id))
     except Exception:
         import structlog
-        structlog.get_logger().warning("celery_unavailable_report_pending", report_id=str(report.id))
+
+        structlog.get_logger().warning(
+            "celery_unavailable_report_pending", report_id=str(report.id)
+        )
 
     return {
         "data": {
@@ -121,9 +124,7 @@ async def get_report(
     current_user: User = Depends(get_current_active_user),
 ):
     """Get report status and metadata."""
-    result = await db.execute(
-        select(ComplianceReport).where(ComplianceReport.id == report_id)
-    )
+    result = await db.execute(select(ComplianceReport).where(ComplianceReport.id == report_id))
     report = result.scalar_one_or_none()
     if not report:
         raise NotFoundError(f"Report {report_id} not found")
@@ -149,11 +150,10 @@ async def download_report(
 ):
     """Download a generated report file."""
     from pathlib import Path
+
     from fastapi.responses import FileResponse
 
-    result = await db.execute(
-        select(ComplianceReport).where(ComplianceReport.id == report_id)
-    )
+    result = await db.execute(select(ComplianceReport).where(ComplianceReport.id == report_id))
     report = result.scalar_one_or_none()
     if not report:
         raise NotFoundError(f"Report {report_id} not found")

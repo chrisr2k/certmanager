@@ -5,14 +5,12 @@ shares one database). The API app's get_db dependency is overridden to use
 the test session factory.
 """
 
-import asyncio
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 from certmanager.api.app import create_app
 from certmanager.core.config import reload_settings
@@ -79,9 +77,7 @@ async def seeded_db(db_session: AsyncSession) -> AsyncSession:
     from certmanager.core.seed import seed_all
 
     await seed_all(db_session, admin_email=ADMIN_EMAIL, admin_password=ADMIN_PASSWORD)
-    db_session.add(
-        Datacenter(name="Test DC", code="tstdc", location="Test", timezone="UTC")
-    )
+    db_session.add(Datacenter(name="Test DC", code="tstdc", location="Test", timezone="UTC"))
     await db_session.commit()
     return db_session
 

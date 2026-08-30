@@ -8,7 +8,7 @@ Tasks:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
@@ -44,6 +44,7 @@ def generate_report(self, report_id: str):
         report_id: UUID of the ComplianceReport to generate.
     """
     from sqlalchemy import select
+
     from certmanager.core.models import ComplianceReport
     from certmanager.services.reporting_service import ReportingService
 
@@ -79,7 +80,7 @@ def generate_report(self, report_id: str):
 
                 report.status = "completed"
                 report.file_path = str(file_path)
-                report.generated_at = datetime.now(timezone.utc)
+                report.generated_at = datetime.now(UTC)
                 await db.flush()
                 await db.commit()
 
@@ -99,7 +100,7 @@ def generate_report(self, report_id: str):
     try:
         return _run_async(_run())
     except Exception as exc:
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @shared_task(

@@ -19,18 +19,15 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
-import time
-from pathlib import Path
-from typing import Optional
 
 import structlog
-
-logger = structlog.get_logger()
 
 # Load scanners based on agent type
 from certmanager.agent.scanners.adcs_scanner import ADCSLocalScanner
 from certmanager.agent.scanners.base import ScannerPlugin
 from certmanager.agent.scanners.tls_scanner import TLSScanner
+
+logger = structlog.get_logger()
 
 
 class CertManagerAgent:
@@ -256,9 +253,7 @@ class CertManagerAgent:
             if success:
                 self._local_db.mark_result_submitted(entry["row_id"])
             else:
-                self._local_db.mark_result_failed(
-                    entry["row_id"], "Submission failed during flush"
-                )
+                self._local_db.mark_result_failed(entry["row_id"], "Submission failed during flush")
 
         # Purge entries only after a very large number of failed attempts —
         # discovered certificate data is valuable and must not be dropped
@@ -284,7 +279,7 @@ class CertManagerAgent:
         logger.info("job_starting", job_id=job_id, job_type=job_type)
 
         # Find the right scanner for this job type
-        scanner: Optional[ScannerPlugin] = None
+        scanner: ScannerPlugin | None = None
         if job_type in ("ca_sync", "adcs_scan", "full_discovery"):
             scanner = next(
                 (s for s in self._scanners if s.name == "adcs"),

@@ -1,18 +1,18 @@
 """Tests for CA connector implementations."""
 
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
 
 from certmanager.connectors.base import (
-    CAHealthStatus,
     CAHealthResult,
+    CAHealthStatus,
     CertificateRecord,
+    ConnectorError,
     IssueRequest,
     IssueResult,
-    ConnectorError,
 )
-from certmanager.connectors.factory import get_connector, CredentialStore
-from certmanager.connectors.adcs import ADCSConnector
+from certmanager.connectors.factory import CredentialStore, get_connector
 
 
 class TestCertificateRecord:
@@ -23,8 +23,8 @@ class TestCertificateRecord:
             issuer="CN=Test CA",
             serial_number="01AB",
             thumbprint_sha256="abc123",
-            not_before=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            not_after=datetime(2027, 1, 1, tzinfo=timezone.utc),
+            not_before=datetime(2026, 1, 1, tzinfo=UTC),
+            not_after=datetime(2027, 1, 1, tzinfo=UTC),
         )
         assert record.cert_type == "unknown"
         assert record.status == "active"
@@ -38,8 +38,8 @@ class TestCertificateRecord:
             issuer="CN=Enterprise CA, DC=corp",
             serial_number="FF02",
             thumbprint_sha256="def456",
-            not_before=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            not_after=datetime(2027, 1, 1, tzinfo=timezone.utc),
+            not_before=datetime(2026, 1, 1, tzinfo=UTC),
+            not_after=datetime(2027, 1, 1, tzinfo=UTC),
             key_algorithm="RSA-2048",
             signature_algorithm="sha256WithRSAEncryption",
             sans=["example.com", "*.example.com", "api.example.com"],
@@ -104,8 +104,8 @@ class TestIssueResult:
             issuer="CN=Test CA",
             serial_number="01",
             thumbprint_sha256="abc",
-            not_before=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            not_after=datetime(2027, 1, 1, tzinfo=timezone.utc),
+            not_before=datetime(2026, 1, 1, tzinfo=UTC),
+            not_after=datetime(2027, 1, 1, tzinfo=UTC),
         )
         result = IssueResult(
             certificate=cert,

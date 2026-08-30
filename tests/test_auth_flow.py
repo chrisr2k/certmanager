@@ -8,8 +8,6 @@ port 6399), which exercises the same code path as production Redis.
 from __future__ import annotations
 
 import pyotp
-import pytest
-import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +24,9 @@ class TestLogin:
         )
         assert resp.status_code == 401
 
-    async def test_login_and_profile(self, client: AsyncClient, admin_token: str, admin_headers: dict):
+    async def test_login_and_profile(
+        self, client: AsyncClient, admin_token: str, admin_headers: dict
+    ):
         resp = await client.get("/api/v1/auth/me", headers=admin_headers)
         assert resp.status_code == 200
         profile = resp.json()
@@ -48,23 +48,17 @@ class TestRefreshRotation:
         refresh_token = login.json()["refresh_token"]
 
         # First refresh — rotates the family
-        first = await client.post(
-            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
-        )
+        first = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
         assert first.status_code == 200, first.text
         new_refresh = first.json()["refresh_token"]
         assert new_refresh != refresh_token
 
         # Replaying the OLD token = theft signal → family revoked
-        replay = await client.post(
-            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
-        )
+        replay = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
         assert replay.status_code == 401
 
         # The NEW token is now also dead (whole family revoked)
-        after_reuse = await client.post(
-            "/api/v1/auth/refresh", json={"refresh_token": new_refresh}
-        )
+        after_reuse = await client.post("/api/v1/auth/refresh", json={"refresh_token": new_refresh})
         assert after_reuse.status_code == 401
 
     async def test_logout_revokes_family(self, client: AsyncClient):
@@ -146,9 +140,7 @@ class TestMFAFlow:
         assert login_plain.status_code == 200, "MFA disabled after recovery"
 
         # The consumed code is single-use
-        user = (
-            await seeded_db.execute(select(User).where(User.email == ADMIN_EMAIL))
-        ).scalar_one()
+        user = (await seeded_db.execute(select(User).where(User.email == ADMIN_EMAIL))).scalar_one()
         import hashlib
 
         used_hash = hashlib.sha256(recovery_codes[0].encode()).hexdigest()

@@ -9,8 +9,7 @@ Handles canonical certificate record management:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import select, update
@@ -22,10 +21,10 @@ from certmanager.core.models import Certificate, CertificateChain
 logger = structlog.get_logger()
 
 
-def _as_aware(dt: Optional[datetime]) -> Optional[datetime]:
+def _as_aware(dt: datetime | None) -> datetime | None:
     """Normalize a DB-loaded datetime to timezone-aware (SQLite drops tzinfo)."""
     if dt is not None and dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -44,10 +43,10 @@ class CertificateService:
 
     async def upsert_from_discovery(
         self,
-        records: List[CertificateRecord],
-        source_ca_id: Optional[str],
+        records: list[CertificateRecord],
+        source_ca_id: str | None,
         source_type: str,
-        datacenter_id: Optional[str],
+        datacenter_id: str | None,
         scan_job_id: str,
     ) -> dict:
         """Upsert certificates from a discovery scan.
@@ -97,19 +96,17 @@ class CertificateService:
         record: CertificateRecord,
         source_ca_id: str,
         source_type: str,
-        datacenter_id: Optional[str],
+        datacenter_id: str | None,
         scan_job_id: str,
     ) -> str:
         """Upsert a single certificate record. Returns 'new', 'updated', or 'unchanged'."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Try to find existing certificate by thumbprint (strongest match)
         existing = None
         if record.thumbprint_sha256:
             result = await self.db.execute(
-                select(Certificate).where(
-                    Certificate.thumbprint_sha256 == record.thumbprint_sha256
-                )
+                select(Certificate).where(Certificate.thumbprint_sha256 == record.thumbprint_sha256)
             )
             existing = result.scalar_one_or_none()
 
@@ -212,7 +209,7 @@ class CertificateService:
             return "unchanged"
 
     async def _upsert_chain(
-        self, leaf_cert_id: str, chain_records: List[CertificateRecord]
+        self, leaf_cert_id: str, chain_records: list[CertificateRecord]
     ) -> None:
         """Insert chain certificates for a leaf certificate."""
         for idx, chain_cert in enumerate(chain_records):
@@ -233,7 +230,7 @@ class CertificateService:
 
         Checks expiry first, then the source-reported status.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if record.not_after and record.not_after < now:
             return "expired"
@@ -252,7 +249,7 @@ class CertificateService:
         Returns:
             Number of certificates marked as expired.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         result = await self.db.execute(
             update(Certificate)
@@ -270,9 +267,7 @@ class CertificateService:
 
         return count
 
-    async def get_expiring_certs(
-        self, days: int = 30, limit: int = 100
-    ) -> List[Certificate]:
+    async def get_expiring_certs(self, days: int = 30, limit: int = 100) -> list[Certificate]:
         """Get certificates expiring within N days.
 
         Args:
@@ -282,10 +277,8 @@ class CertificateService:
         Returns:
             List of Certificate ORM objects ordered by nearest expiry.
         """
-        now = datetime.now(timezone.utc)
-        cutoff = now.replace(
-            hour=23, minute=59, second=59
-        ) + timedelta(days=days)
+        now = datetime.now(UTC)
+        cutoff = now.replace(hour=23, minute=59, second=59) + timedelta(days=days)
 
         result = await self.db.execute(
             select(Certificate)
@@ -303,16 +296,14 @@ class CertificateService:
         """Get certificate statistics for dashboards."""
         from sqlalchemy import func
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         thirty_days = now + timedelta(days=30)
         sixty_days = now + timedelta(days=60)
         ninety_days = now + timedelta(days=90)
 
         # Total by status
         status_result = await self.db.execute(
-            select(Certificate.status, func.count(Certificate.id)).group_by(
-                Certificate.status
-            )
+            select(Certificate.status, func.count(Certificate.id)).group_by(Certificate.status)
         )
         status_counts = dict(status_result.all())
 

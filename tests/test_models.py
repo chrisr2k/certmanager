@@ -2,10 +2,10 @@
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from certmanager.core.models import Base, User, Role, Permission, Datacenter
+from certmanager.core.models import Base, Datacenter, Role, User
 
 
 @pytest_asyncio.fixture
@@ -41,9 +41,7 @@ class TestUserModel:
         db_session.add(user)
         await db_session.flush()
 
-        result = await db_session.execute(
-            select(User).where(User.email == "query@test.com")
-        )
+        result = await db_session.execute(select(User).where(User.email == "query@test.com"))
         found = result.scalar_one_or_none()
         assert found is not None
         assert found.email == "query@test.com"
@@ -55,13 +53,12 @@ class TestUserModel:
         await db_session.flush()
 
         from certmanager.core.models import UserRole
+
         db_session.add(UserRole(user_id=user.id, role_id=role.id))
         await db_session.flush()
 
         # Query with relationship loaded
-        result = await db_session.execute(
-            select(User).where(User.id == user.id)
-        )
+        result = await db_session.execute(select(User).where(User.id == user.id))
         found = result.scalar_one()
         assert found is not None
 
@@ -78,7 +75,9 @@ class TestRoleModel:
         await db_session.flush()
 
         db_session.add(Role(name="unique-role"))
-        with pytest.raises(Exception):  # UNIQUE constraint
+        from sqlalchemy.exc import IntegrityError
+
+        with pytest.raises(IntegrityError):  # UNIQUE constraint
             await db_session.flush()
 
 

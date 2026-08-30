@@ -11,7 +11,6 @@ fail the request.
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime
 
 import structlog

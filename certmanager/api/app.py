@@ -10,13 +10,16 @@ Creates and configures the FastAPI app with:
 
 from __future__ import annotations
 
-import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from certmanager.api.middleware.audit import AuditLogMiddleware
+from certmanager.api.middleware.correlation_id import CorrelationIDMiddleware
+from certmanager.api.middleware.rate_limit import RateLimitMiddleware
+from certmanager.api.middleware.rbac import RBACMiddleware
 from certmanager.core.config import get_settings
 from certmanager.core.exceptions import (
     AuthenticationError,
@@ -29,10 +32,6 @@ from certmanager.core.exceptions import (
     ValidationError,
 )
 from certmanager.core.logging import configure_logging
-from certmanager.api.middleware.audit import AuditLogMiddleware
-from certmanager.api.middleware.correlation_id import CorrelationIDMiddleware
-from certmanager.api.middleware.rbac import RBACMiddleware
-from certmanager.api.middleware.rate_limit import RateLimitMiddleware
 
 
 @asynccontextmanager

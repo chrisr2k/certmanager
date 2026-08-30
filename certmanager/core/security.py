@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import bcrypt
-from jose import JWTError, jwt
+from jose import jwt
 
 from certmanager.core.config import get_settings
 
@@ -176,7 +176,6 @@ async def verify_refresh_family(family: str, presented_jti: str) -> bool:
     If a previously-rotated (stolen) token is presented, the whole family
     is revoked and False is returned.
     """
-    from certmanager.core.exceptions import TokenReuseError
 
     client = await _redis()
     if client is not None:

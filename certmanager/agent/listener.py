@@ -21,10 +21,8 @@ implemented yet; connectors surface that as a clear ConnectorError.
 
 from __future__ import annotations
 
-import asyncio
 import hmac
 import ssl
-from typing import Optional
 
 import structlog
 
@@ -154,7 +152,7 @@ class AgentListener:
             app.router.add_get(route, self._handle_not_supported)
         return app
 
-    def _ssl_context(self) -> Optional[ssl.SSLContext]:
+    def _ssl_context(self) -> ssl.SSLContext | None:
         """Build the server TLS context; require client certs when a CA is set."""
         if not self.settings.listener_ssl_cert or not self.settings.listener_ssl_key:
             return None

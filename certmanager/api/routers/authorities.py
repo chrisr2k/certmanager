@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, UTC
-from typing import Optional
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -23,23 +22,23 @@ class AuthorityCreate(BaseModel):
 
     name: str
     ca_type: str
-    datacenter_id: Optional[str] = None
-    config: Optional[dict] = None
+    datacenter_id: str | None = None
+    config: dict | None = None
 
 
 class AuthorityUpdate(BaseModel):
     """Body for updating a CA — all fields optional."""
 
-    name: Optional[str] = None
-    config: Optional[dict] = None
-    is_active: Optional[bool] = None
+    name: str | None = None
+    config: dict | None = None
+    is_active: bool | None = None
 
 
 @router.get("")
 async def list_authorities(
-    ca_type: Optional[str] = Query(default=None),
-    dc_id: Optional[str] = Query(default=None),
-    health: Optional[str] = Query(default=None),
+    ca_type: str | None = Query(default=None),
+    dc_id: str | None = Query(default=None),
+    health: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -91,9 +90,7 @@ async def create_authority(
         )
     )
     if existing.scalar_one_or_none():
-        raise ConflictError(
-            f"Authority '{body.name}' of type '{body.ca_type}' already exists"
-        )
+        raise ConflictError(f"Authority '{body.name}' of type '{body.ca_type}' already exists")
 
     authority = CertificateAuthority(
         name=body.name,
@@ -194,9 +191,7 @@ async def test_authority(
     from certmanager.connectors.factory import get_connector
 
     result = await db.execute(
-        select(CertificateAuthority).where(
-            CertificateAuthority.id == authority_id
-        )
+        select(CertificateAuthority).where(CertificateAuthority.id == authority_id)
     )
     authority = result.scalar_one_or_none()
     if not authority:
@@ -242,9 +237,7 @@ async def trigger_authority_scan(
     from certmanager.core.models import ScanJob
 
     result = await db.execute(
-        select(CertificateAuthority).where(
-            CertificateAuthority.id == authority_id
-        )
+        select(CertificateAuthority).where(CertificateAuthority.id == authority_id)
     )
     authority = result.scalar_one_or_none()
     if not authority:

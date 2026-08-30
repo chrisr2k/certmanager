@@ -4,7 +4,6 @@ Uses the shared conftest client (seeded test DB) so these hit a real
 database instead of the default Postgres URL.
 """
 
-import pytest
 from httpx import AsyncClient
 
 

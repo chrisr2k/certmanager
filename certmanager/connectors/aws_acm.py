@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 import structlog
 from cryptography import x509
@@ -27,7 +26,6 @@ from certmanager.connectors.base import (
     CAHealthResult,
     CAHealthStatus,
     CertificateRecord,
-    ConnectorAuthError,
     ConnectorError,
     IssueRequest,
     IssueResult,
@@ -60,10 +58,10 @@ class AWSACMConnector(CAConnector):
     def __init__(
         self,
         account_id: str,
-        regions: List[str],
-        role_arn: Optional[str] = None,
-        external_id: Optional[str] = None,
-        profile_name: Optional[str] = None,
+        regions: list[str],
+        role_arn: str | None = None,
+        external_id: str | None = None,
+        profile_name: str | None = None,
     ):
         """Initialize the AWS ACM connector.
 
@@ -156,9 +154,7 @@ class AWSACMConnector(CAConnector):
                 detail={"error": error_str},
             )
 
-    async def discover_certificates(
-        self, scope: Optional[dict] = None
-    ) -> List[CertificateRecord]:
+    async def discover_certificates(self, scope: dict | None = None) -> list[CertificateRecord]:
         """Discover all ACM certificates across configured accounts/regions.
 
         Paginates through list_certificates, then describes each one for
@@ -172,7 +168,7 @@ class AWSACMConnector(CAConnector):
             List of normalized CertificateRecord objects.
         """
         regions = (scope or {}).get("regions", self.regions)
-        all_certs: List[CertificateRecord] = []
+        all_certs: list[CertificateRecord] = []
 
         for region in regions:
             try:
@@ -196,15 +192,15 @@ class AWSACMConnector(CAConnector):
 
         return all_certs
 
-    async def _discover_region(self, region: str) -> List[CertificateRecord]:
+    async def _discover_region(self, region: str) -> list[CertificateRecord]:
         """Discover all ACM certificates in a single region."""
         client = await self._get_acm_client(region)
-        records: List[CertificateRecord] = []
+        records: list[CertificateRecord] = []
 
         async with client as acm:
             # Paginate through certificate list
             paginator = acm.get_paginator("list_certificates")
-            cert_arns: List[str] = []
+            cert_arns: list[str] = []
 
             async for page in paginator.paginate(
                 CertificateStatuses=[
@@ -227,9 +223,7 @@ class AWSACMConnector(CAConnector):
                     record = self._parse_certificate(cert_detail, region)
                     records.append(record)
                 except Exception as e:
-                    logger.warning(
-                        "acm_describe_failed", arn=arn, error=str(e)
-                    )
+                    logger.warning("acm_describe_failed", arn=arn, error=str(e))
                     # Skip individual certs that fail to describe
                     continue
 
@@ -255,7 +249,7 @@ class AWSACMConnector(CAConnector):
         thumbprint = ""
         subject_str = ""
         issuer_str = ""
-        sans: List[str] = [domain] if domain else []
+        sans: list[str] = [domain] if domain else []
         is_ca = False
 
         if cert_pem:
@@ -272,18 +266,14 @@ class AWSACMConnector(CAConnector):
 
                 # SANs
                 try:
-                    san_ext = cert.extensions.get_extension_for_class(
-                        x509.SubjectAlternativeName
-                    )
+                    san_ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
                     sans = san_ext.value.get_values_for_type(x509.DNSName)
                 except x509.ExtensionNotFound:
                     sans = [domain] if domain else []
 
                 # Check if CA certificate
                 try:
-                    bc = cert.extensions.get_extension_for_class(
-                        x509.BasicConstraints
-                    )
+                    bc = cert.extensions.get_extension_for_class(x509.BasicConstraints)
                     is_ca = bc.value.ca
                 except x509.ExtensionNotFound:
                     is_ca = False
@@ -298,23 +288,19 @@ class AWSACMConnector(CAConnector):
 
         # Build chain records from ACM's chain
         chain_records = []
-        chain_pems = detail.get("InUseBy", [])  # ACM doesn't expose chain directly
+        detail.get("InUseBy", [])  # ACM doesn't expose chain directly
         # The full chain is in the CertificateChain field for private CAs
         chain_str = detail.get("CertificateChain")
         if chain_str:
             try:
-                for chain_cert in x509.load_pem_x509_certificates(
-                    chain_str.encode()
-                ):
+                for chain_cert in x509.load_pem_x509_certificates(chain_str.encode()):
                     chain_records.append(
                         CertificateRecord(
                             common_name=chain_cert.subject.rfc4514_string(),
                             subject=chain_cert.subject.rfc4514_string(),
                             issuer=chain_cert.issuer.rfc4514_string(),
                             serial_number=format(chain_cert.serial_number, "X"),
-                            thumbprint_sha256=chain_cert.fingerprint(
-                                hashes.SHA256()
-                            ).hex(),
+                            thumbprint_sha256=chain_cert.fingerprint(hashes.SHA256()).hex(),
                             not_before=chain_cert.not_valid_before_utc,
                             not_after=chain_cert.not_valid_after_utc,
                             source_id=arn,
@@ -368,7 +354,7 @@ class AWSACMConnector(CAConnector):
         }
         return mapping.get(acm_status, "unknown")
 
-    async def get_certificate(self, source_id: str) -> Optional[CertificateRecord]:
+    async def get_certificate(self, source_id: str) -> CertificateRecord | None:
         """Get a single certificate by its AWS ARN."""
         # Parse region from ARN
         try:
@@ -384,7 +370,7 @@ class AWSACMConnector(CAConnector):
             except Exception as e:
                 if "ResourceNotFoundException" in str(e):
                     return None
-                raise ConnectorError(f"Failed to get certificate {source_id}: {e}")
+                raise ConnectorError(f"Failed to get certificate {source_id}: {e}") from e
 
     async def issue_certificate(self, request: IssueRequest) -> IssueResult:
         """Request a new ACM certificate (DNS validation).
@@ -417,8 +403,8 @@ class AWSACMConnector(CAConnector):
                 issuer="pending",
                 serial_number="pending",
                 thumbprint_sha256=hashlib.sha256(arn.encode()).hexdigest(),
-                not_before=datetime.now(timezone.utc),
-                not_after=datetime.now(timezone.utc),
+                not_before=datetime.now(UTC),
+                not_after=datetime.now(UTC),
                 key_algorithm=request.key_algorithm,
                 sans=request.sans,
                 cert_type=request.cert_type,
@@ -448,9 +434,7 @@ class AWSACMConnector(CAConnector):
             private_key_pem=None,
         )
 
-    async def revoke_certificate(
-        self, source_id: str, reason: str = "unspecified"
-    ) -> bool:
+    async def revoke_certificate(self, source_id: str, reason: str = "unspecified") -> bool:
         """ACM does not support certificate revocation.
 
         AWS Certificate Manager has no revoke API. For ACM-issued
@@ -469,7 +453,7 @@ class AWSACMConnector(CAConnector):
             "certificates, revoke at the issuing CA)."
         )
 
-    async def get_certificate_chain(self, source_id: str) -> List[CertificateRecord]:
+    async def get_certificate_chain(self, source_id: str) -> list[CertificateRecord]:
         """Get the certificate chain from ACM.
 
         For ACM-issued certs, the chain is embedded in the certificate

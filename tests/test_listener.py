@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -45,7 +44,9 @@ class FakeSettings:
 
 @pytest_asyncio.fixture
 async def listener_app():
-    listener = AgentListener(settings=FakeSettings(), scanners=[StubADCSScanner()], agent_token="test-agent-token")
+    listener = AgentListener(
+        settings=FakeSettings(), scanners=[StubADCSScanner()], agent_token="test-agent-token"
+    )
     app = listener._build_app()
     yield app
 

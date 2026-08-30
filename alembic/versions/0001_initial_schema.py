@@ -5,17 +5,18 @@ Revises: None
 Create Date: 2026-06-28
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 # revision identifiers
 revision: str = "0001"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -30,8 +31,12 @@ def upgrade() -> None:
         sa.Column("is_superuser", sa.Boolean(), default=False, nullable=False),
         sa.Column("mfa_secret", sa.String(64)),
         sa.Column("mfa_enabled", sa.Boolean(), default=False, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_users_email", "users", ["email"])
 
@@ -40,8 +45,12 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
         sa.Column("name", sa.String(100), unique=True, nullable=False),
         sa.Column("description", sa.Text()),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
     op.create_table(
@@ -54,14 +63,34 @@ def upgrade() -> None:
 
     op.create_table(
         "role_permissions",
-        sa.Column("role_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("permission_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "role_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("roles.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+        sa.Column(
+            "permission_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("permissions.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
     )
 
     op.create_table(
         "user_roles",
-        sa.Column("user_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("role_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "user_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+        sa.Column(
+            "role_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("roles.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
     )
 
     # --- Datacenters ---
@@ -74,8 +103,12 @@ def upgrade() -> None:
         sa.Column("timezone", sa.String(50), default="UTC", nullable=False),
         sa.Column("is_active", sa.Boolean(), default=True, nullable=False),
         sa.Column("metadata_json", postgresql.JSONB(), default=sa.text("'{}'::jsonb")),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
     # --- Certificate Authorities ---
@@ -84,7 +117,11 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("ca_type", sa.String(50), nullable=False),
-        sa.Column("datacenter_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("datacenters.id", ondelete="SET NULL")),
+        sa.Column(
+            "datacenter_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("datacenters.id", ondelete="SET NULL"),
+        ),
         sa.Column("is_active", sa.Boolean(), default=True, nullable=False),
         sa.Column("config", postgresql.JSONB(), default=sa.text("'{}'::jsonb"), nullable=False),
         sa.Column("credential_ref", sa.String(255)),
@@ -92,8 +129,12 @@ def upgrade() -> None:
         sa.Column("last_scan_status", sa.String(50)),
         sa.Column("last_error", sa.Text()),
         sa.Column("health_status", sa.String(20), default="unknown"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.UniqueConstraint("name", "ca_type", name="uq_ca_name_type"),
     )
 
@@ -104,7 +145,9 @@ def upgrade() -> None:
         sa.Column("encrypted_value", sa.LargeBinary(), nullable=False),
         sa.Column("encryption_key_id", sa.String(100), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True)),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column("rotated_at", sa.DateTime(timezone=True)),
     )
 
@@ -124,20 +167,39 @@ def upgrade() -> None:
         sa.Column("key_algorithm", sa.String(50)),
         sa.Column("signature_algorithm", sa.String(50)),
         sa.Column("sans", postgresql.ARRAY(sa.Text())),
-        sa.Column("source_ca_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("certificate_authorities.id", ondelete="SET NULL")),
+        sa.Column(
+            "source_ca_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("certificate_authorities.id", ondelete="SET NULL"),
+        ),
         sa.Column("source_type", sa.String(50), nullable=False),
         sa.Column("source_detail", postgresql.JSONB(), default=sa.text("'{}'::jsonb")),
         sa.Column("status", sa.String(30), default="active"),
         sa.Column("is_wildcard", sa.Boolean(), default=False, nullable=False),
         sa.Column("is_ca", sa.Boolean(), default=False, nullable=False),
-        sa.Column("datacenter_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("datacenters.id", ondelete="SET NULL")),
+        sa.Column(
+            "datacenter_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("datacenters.id", ondelete="SET NULL"),
+        ),
         sa.Column("owner", sa.String(255)),
         sa.Column("tags", postgresql.JSONB(), default=sa.text("'{}'::jsonb")),
-        sa.Column("first_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("last_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "first_seen_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "last_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column("discovered_by", sa.String(100)),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("idx_certificates_expiry", "certificates", ["not_after", "status"])
     op.create_index("idx_certificates_thumbprint", "certificates", ["thumbprint_sha256"])
@@ -145,8 +207,13 @@ def upgrade() -> None:
     op.create_index("idx_certificates_dc", "certificates", ["datacenter_id"])
     op.create_index("idx_certificates_type_status", "certificates", ["cert_type", "status"])
     op.create_index(
-        "idx_certificates_search", "certificates",
-        [sa.text("to_tsvector('english', coalesce(common_name,'') || ' ' || coalesce(subject,'') || ' ' || coalesce(issuer,''))")],
+        "idx_certificates_search",
+        "certificates",
+        [
+            sa.text(
+                "to_tsvector('english', coalesce(common_name,'') || ' ' || coalesce(subject,'') || ' ' || coalesce(issuer,''))"
+            )
+        ],
         postgresql_using="GIN",
     )
     op.create_index("idx_certificates_sans", "certificates", ["sans"], postgresql_using="GIN")
@@ -155,13 +222,19 @@ def upgrade() -> None:
     op.create_table(
         "certificate_chains",
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column("leaf_cert_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("certificates.id", ondelete="CASCADE")),
+        sa.Column(
+            "leaf_cert_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("certificates.id", ondelete="CASCADE"),
+        ),
         sa.Column("chain_order", sa.Integer(), nullable=False),
         sa.Column("cert_pem_sha256", sa.String(64), nullable=False),
         sa.Column("cert_subject", sa.Text()),
         sa.Column("cert_issuer", sa.Text()),
         sa.Column("not_after", sa.DateTime(timezone=True)),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("idx_chains_leaf", "certificate_chains", ["leaf_cert_id"])
 
@@ -179,8 +252,14 @@ def upgrade() -> None:
         sa.Column("not_before", sa.DateTime(timezone=True)),
         sa.Column("not_after", sa.DateTime(timezone=True)),
         sa.Column("is_precert", sa.Boolean(), default=False),
-        sa.Column("matched_cert_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("certificates.id", ondelete="SET NULL")),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "matched_cert_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("certificates.id", ondelete="SET NULL"),
+        ),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("idx_ct_entries_domains", "ct_log_entries", ["domains"], postgresql_using="GIN")
     op.create_index("idx_ct_entries_thumbprint", "ct_log_entries", ["cert_thumbprint"])
@@ -193,37 +272,67 @@ def upgrade() -> None:
         sa.Column("description", sa.Text()),
         sa.Column("is_enabled", sa.Boolean(), default=True, nullable=False),
         sa.Column("condition_type", sa.String(50), nullable=False),
-        sa.Column("condition_config", postgresql.JSONB(), default=sa.text("'{}'::jsonb"), nullable=False),
+        sa.Column(
+            "condition_config", postgresql.JSONB(), default=sa.text("'{}'::jsonb"), nullable=False
+        ),
         sa.Column("scope_filter", postgresql.JSONB(), default=sa.text("'{}'::jsonb")),
         sa.Column("severity", sa.String(20), default="warning", nullable=False),
         sa.Column("cooldown_minutes", sa.Integer(), default=60, nullable=False),
-        sa.Column("created_by", postgresql.UUID(as_uuid=False), sa.ForeignKey("users.id", ondelete="SET NULL")),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_by",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+        ),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
     op.create_table(
         "alert_rule_channels",
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column("alert_rule_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("alert_rules.id", ondelete="CASCADE")),
+        sa.Column(
+            "alert_rule_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("alert_rules.id", ondelete="CASCADE"),
+        ),
         sa.Column("channel_type", sa.String(50), nullable=False),
-        sa.Column("channel_config", postgresql.JSONB(), default=sa.text("'{}'::jsonb"), nullable=False),
+        sa.Column(
+            "channel_config", postgresql.JSONB(), default=sa.text("'{}'::jsonb"), nullable=False
+        ),
     )
 
     op.create_table(
         "alert_events",
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column("alert_rule_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("alert_rules.id", ondelete="SET NULL")),
-        sa.Column("cert_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("certificates.id", ondelete="SET NULL")),
+        sa.Column(
+            "alert_rule_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("alert_rules.id", ondelete="SET NULL"),
+        ),
+        sa.Column(
+            "cert_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("certificates.id", ondelete="SET NULL"),
+        ),
         sa.Column("event_type", sa.String(50), nullable=False),
         sa.Column("severity", sa.String(20), nullable=False),
         sa.Column("title", sa.String(500), nullable=False),
         sa.Column("description", sa.Text()),
         sa.Column("context", postgresql.JSONB(), default=sa.text("'{}'::jsonb")),
         sa.Column("is_acknowledged", sa.Boolean(), default=False, nullable=False),
-        sa.Column("acknowledged_by", postgresql.UUID(as_uuid=False), sa.ForeignKey("users.id", ondelete="SET NULL")),
+        sa.Column(
+            "acknowledged_by",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+        ),
         sa.Column("acknowledged_at", sa.DateTime(timezone=True)),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("idx_alert_events_unacked", "alert_events", ["is_acknowledged", "created_at"])
     op.create_index("idx_alert_events_rule", "alert_events", ["alert_rule_id", "created_at"])
@@ -236,7 +345,11 @@ def upgrade() -> None:
         sa.Column("job_type", sa.String(50), nullable=False),
         sa.Column("status", sa.String(30), default="pending", nullable=False),
         sa.Column("triggered_by", sa.String(50), nullable=False),
-        sa.Column("triggered_by_user", postgresql.UUID(as_uuid=False), sa.ForeignKey("users.id", ondelete="SET NULL")),
+        sa.Column(
+            "triggered_by_user",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+        ),
         sa.Column("scope_config", postgresql.JSONB(), default=sa.text("'{}'::jsonb")),
         sa.Column("correlation_id", sa.String(100)),
         sa.Column("total_checked", sa.Integer(), default=0),
@@ -246,7 +359,9 @@ def upgrade() -> None:
         sa.Column("error_detail", postgresql.JSONB(), default=sa.text("'[]'::jsonb")),
         sa.Column("started_at", sa.DateTime(timezone=True)),
         sa.Column("completed_at", sa.DateTime(timezone=True)),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
     # --- Agents ---
@@ -255,7 +370,11 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
         sa.Column("name", sa.String(255), unique=True, nullable=False),
         sa.Column("agent_type", sa.String(50), nullable=False),
-        sa.Column("datacenter_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("datacenters.id", ondelete="SET NULL")),
+        sa.Column(
+            "datacenter_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("datacenters.id", ondelete="SET NULL"),
+        ),
         sa.Column("hostname", sa.String(255)),
         sa.Column("ip_address", sa.String(45)),
         sa.Column("version", sa.String(50)),
@@ -265,8 +384,12 @@ def upgrade() -> None:
         sa.Column("last_job_at", sa.DateTime(timezone=True)),
         sa.Column("config", postgresql.JSONB(), default=sa.text("'{}'::jsonb")),
         sa.Column("is_approved", sa.Boolean(), default=False, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
     # --- Audit Log ---
@@ -284,10 +407,14 @@ def upgrade() -> None:
         sa.Column("ip_address", sa.String(45)),
         sa.Column("user_agent", sa.Text()),
         sa.Column("correlation_id", sa.String(100)),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("idx_audit_actor", "audit_log", ["actor_type", "actor_id", "created_at"])
-    op.create_index("idx_audit_resource", "audit_log", ["resource_type", "resource_id", "created_at"])
+    op.create_index(
+        "idx_audit_resource", "audit_log", ["resource_type", "resource_id", "created_at"]
+    )
     op.create_index("idx_audit_event_type", "audit_log", ["event_type", "created_at"])
 
     # --- Notification Channels ---
@@ -298,14 +425,18 @@ def upgrade() -> None:
         sa.Column("channel_type", sa.String(50), nullable=False),
         sa.Column("config", postgresql.JSONB(), default=sa.text("'{}'::jsonb"), nullable=False),
         sa.Column("is_verified", sa.Boolean(), default=False, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
     # --- API Keys ---
     op.create_table(
         "api_keys",
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column("user_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("users.id", ondelete="CASCADE")),
+        sa.Column(
+            "user_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("users.id", ondelete="CASCADE")
+        ),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("key_hash", sa.String(128), unique=True, nullable=False),
         sa.Column("prefix", sa.String(8), nullable=False),
@@ -313,8 +444,12 @@ def upgrade() -> None:
         sa.Column("last_used_at", sa.DateTime(timezone=True)),
         sa.Column("expires_at", sa.DateTime(timezone=True)),
         sa.Column("is_active", sa.Boolean(), default=True, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
     # --- Compliance Reports ---
@@ -326,9 +461,15 @@ def upgrade() -> None:
         sa.Column("parameters", postgresql.JSONB(), default=sa.text("'{}'::jsonb")),
         sa.Column("file_path", sa.Text()),
         sa.Column("file_format", sa.String(20)),
-        sa.Column("generated_by", postgresql.UUID(as_uuid=False), sa.ForeignKey("users.id", ondelete="SET NULL")),
+        sa.Column(
+            "generated_by",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+        ),
         sa.Column("generated_at", sa.DateTime(timezone=True)),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
 

@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Optional
 
 import structlog
 
@@ -31,15 +30,22 @@ class AgentAuthError(Exception):
 class AgentAPIClient:
     """HTTP client for the central CertManager API from the agent's perspective."""
 
-    def __init__(self, api_url: str, agent_name: str, psk: str, agent_type: str = "", datacenter_code: str = ""):
+    def __init__(
+        self,
+        api_url: str,
+        agent_name: str,
+        psk: str,
+        agent_type: str = "",
+        datacenter_code: str = "",
+    ):
         self.api_url = api_url.rstrip("/")
         self.agent_name = agent_name
         self.psk = psk
         self.agent_type = agent_type
         self.datacenter_code = datacenter_code
-        self.agent_id: Optional[str] = None
-        self.api_token: Optional[str] = None
-        self.agent_token: Optional[str] = None  # permanent token (connector listener)
+        self.agent_id: str | None = None
+        self.api_token: str | None = None
+        self.agent_token: str | None = None  # permanent token (connector listener)
         self._session = None
 
     async def _get_session(self):
@@ -56,7 +62,9 @@ class AgentAPIClient:
             )
         return self._session
 
-    async def _request(self, method: str, path: str, json_data: dict = None, auth: bool = True) -> dict:
+    async def _request(
+        self, method: str, path: str, json_data: dict = None, auth: bool = True
+    ) -> dict:
         """Make an HTTP request to the central API.
 
         Raises:
@@ -123,7 +131,9 @@ class AgentAPIClient:
             agent_id = data.get("agent_id")
             api_token = data.get("api_token")
             if not agent_id or not api_token:
-                logger.error("agent_registration_malformed_response", response_keys=list(data.keys()))
+                logger.error(
+                    "agent_registration_malformed_response", response_keys=list(data.keys())
+                )
                 return False
 
             self.agent_id = agent_id
@@ -286,9 +296,7 @@ class AgentAPIClient:
         payload_json = json.dumps(payload, indent=2, default=str)
 
         # Sign with HMAC-SHA256
-        mac = hmac.new(
-            secret.encode(), payload_json.encode(), hashlib.sha256
-        ).hexdigest()
+        mac = hmac.new(secret.encode(), payload_json.encode(), hashlib.sha256).hexdigest()
         payload["hmac"] = mac
         payload_json = json.dumps(payload, indent=2, default=str)
 
@@ -350,9 +358,7 @@ class AgentAPIClient:
         expected_hmac = data.pop("hmac")
         # Recompute without the hmac field
         recomputed = json.dumps(data, indent=2, default=str)
-        actual_hmac = hmac.new(
-            secret.encode(), recomputed.encode(), hashlib.sha256
-        ).hexdigest()
+        actual_hmac = hmac.new(secret.encode(), recomputed.encode(), hashlib.sha256).hexdigest()
 
         if not hmac.compare_digest(actual_hmac, expected_hmac):
             logger.error("export_hmac_mismatch", path=export_path)

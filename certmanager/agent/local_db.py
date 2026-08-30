@@ -14,10 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import structlog
 
@@ -173,10 +170,7 @@ class LocalDB:
                 (f"-{since_hours} hours",),
             ).fetchall()
 
-            return [
-                {"timestamp": row["timestamp"], "status": row["agent_status"]}
-                for row in rows
-            ]
+            return [{"timestamp": row["timestamp"], "status": row["agent_status"]} for row in rows]
 
     def clear_heartbeats(self) -> None:
         """Clear buffered heartbeats after successful flush."""
@@ -195,12 +189,10 @@ class LocalDB:
             )
             conn.commit()
 
-    def get_state(self, key: str) -> Optional[str]:
+    def get_state(self, key: str) -> str | None:
         """Read a persisted state value."""
         with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT value FROM agent_state WHERE key = ?", (key,)
-            ).fetchone()
+            row = conn.execute("SELECT value FROM agent_state WHERE key = ?", (key,)).fetchone()
             return row["value"] if row else None
 
     def get_all_state(self) -> dict[str, str]:

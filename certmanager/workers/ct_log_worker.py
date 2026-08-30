@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import structlog
 from celery import shared_task
@@ -37,6 +36,7 @@ def check_ct_logs(self):
 
     Scheduled task — runs daily (or more frequently for critical domains).
     """
+
     async def _run():
         factory = get_session_factory()
         async with factory() as db:
@@ -75,21 +75,22 @@ class CTMonitor:
         Returns:
             Dict with stats: domains_checked, new_entries, unknown_certs.
         """
-        from sqlalchemy import select, func
-        from certmanager.core.models import Certificate, CTLogEntry, AlertRule, AlertEvent
+        from sqlalchemy import func, select
+
+        from certmanager.core.models import Certificate
 
         # Collect unique domains from certificate inventory
-        result = await self.db.execute(
-            select(func.unnest(Certificate.sans)).distinct()
-        )
+        result = await self.db.execute(select(func.unnest(Certificate.sans)).distinct())
         domains = [row[0] for row in result.all() if row[0]]
 
         # Also include common names
         cn_result = await self.db.execute(
-            select(Certificate.common_name).where(
+            select(Certificate.common_name)
+            .where(
                 Certificate.common_name.isnot(None),
                 Certificate.status == "active",
-            ).distinct()
+            )
+            .distinct()
         )
         for row in cn_result.all():
             cn = row[0]
@@ -97,7 +98,7 @@ class CTMonitor:
                 domains.append(cn)
 
         # Deduplicate
-        domains = list(set(d for d in domains if d and "." in d))
+        domains = list({d for d in domains if d and "." in d})
 
         if not domains:
             logger.info("ct_no_domains_to_check")
@@ -112,9 +113,7 @@ class CTMonitor:
                 stats["domains_checked"] += 1
 
                 for entry in entries:
-                    is_new, is_unknown = await self._process_entry(
-                        entry, domain
-                    )
+                    is_new, is_unknown = await self._process_entry(entry, domain)
                     if is_new:
                         stats["new_entries"] += 1
                     if is_unknown:
@@ -147,9 +146,7 @@ class CTMonitor:
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status != 200:
-                        logger.warning(
-                            "crtsh_error", domain=domain, status=resp.status
-                        )
+                        logger.warning("crtsh_error", domain=domain, status=resp.status)
                         return []
 
                     data = await resp.json()
@@ -159,9 +156,7 @@ class CTMonitor:
             logger.warning("crtsh_request_failed", domain=domain, error=str(e))
             return []
 
-    async def _process_entry(
-        self, entry: dict, domain: str
-    ) -> tuple[bool, bool]:
+    async def _process_entry(self, entry: dict, domain: str) -> tuple[bool, bool]:
         """Process a CT log entry.
 
         Determines if the entry is new (not seen before) and if the
@@ -170,10 +165,10 @@ class CTMonitor:
         Returns:
             Tuple of (is_new, is_unknown).
         """
-        from certmanager.core.models import CTLogEntry, Certificate
+        from certmanager.core.models import Certificate, CTLogEntry
 
         entry_id = entry.get("id")
-        issuer = entry.get("issuer_ca_id", "")  # crt.sh uses CA IDs
+        entry.get("issuer_ca_id", "")  # crt.sh uses CA IDs
         issuer_name = entry.get("issuer_name", "")
         logged_at_str = entry.get("entry_timestamp")
         not_before_str = entry.get("not_before")
@@ -182,15 +177,11 @@ class CTMonitor:
         serial = entry.get("serial_number", "")
 
         # Compute thumbprint from serial
-        thumbprint = hashlib.sha256(
-            f"{domain}:{serial}:{name_value}".encode()
-        ).hexdigest()
+        thumbprint = hashlib.sha256(f"{domain}:{serial}:{name_value}".encode()).hexdigest()
 
         # Check if we've already seen this entry
         existing = await self.db.execute(
-            __import__("sqlalchemy").select(CTLogEntry).where(
-                CTLogEntry.entry_index == entry_id
-            )
+            __import__("sqlalchemy").select(CTLogEntry).where(CTLogEntry.entry_index == entry_id)
         )
         if existing.scalar_one_or_none():
             return False, False  # Already seen
@@ -207,9 +198,7 @@ class CTMonitor:
         matching_cert = None
         for d in domains:
             result = await self.db.execute(
-                __import__("sqlalchemy").select(Certificate).where(
-                    Certificate.sans.contains([d])
-                )
+                __import__("sqlalchemy").select(Certificate).where(Certificate.sans.contains([d]))
             )
             cert = result.scalar_one_or_none()
             if cert:
@@ -220,7 +209,9 @@ class CTMonitor:
         if not matching_cert:
             for d in domains:
                 result = await self.db.execute(
-                    __import__("sqlalchemy").select(Certificate).where(
+                    __import__("sqlalchemy")
+                    .select(Certificate)
+                    .where(
                         Certificate.common_name == d,
                         Certificate.status == "active",
                     )
@@ -269,17 +260,19 @@ class CTMonitor:
         issuer: str,
         serial: str,
         thumbprint: str,
-        logged_at: Optional[datetime],
-        not_after: Optional[datetime],
+        logged_at: datetime | None,
+        not_after: datetime | None,
     ) -> None:
         """Create a high-severity alert for a shadow/unknown certificate."""
         from certmanager.core.models import AlertEvent, AlertRule
 
         # Find CT monitoring alert rules
         result = await self.db.execute(
-            __import__("sqlalchemy").select(AlertRule).where(
+            __import__("sqlalchemy")
+            .select(AlertRule)
+            .where(
                 AlertRule.condition_type == "ct_new_cert",
-                AlertRule.is_enabled == True,
+                AlertRule.is_enabled,
             )
         )
         rules = result.scalars().all()
@@ -314,18 +307,14 @@ class CTMonitor:
             self.db.add(event)
 
     @staticmethod
-    def _parse_date(date_str: Optional[str]) -> Optional[datetime]:
+    def _parse_date(date_str: str | None) -> datetime | None:
         """Parse a date string from crt.sh format."""
         if not date_str:
             return None
         try:
-            return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S").replace(
-                tzinfo=timezone.utc
-            )
+            return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
         except ValueError:
             try:
-                return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%f").replace(
-                    tzinfo=timezone.utc
-                )
+                return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%f").replace(tzinfo=UTC)
             except ValueError:
                 return None

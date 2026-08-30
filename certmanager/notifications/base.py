@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -18,10 +17,10 @@ class NotificationMessage:
     title: str
     body: str
     severity: str  # info | warning | critical
-    alert_event_id: Optional[str] = None
-    cert_id: Optional[str] = None
-    cert_common_name: Optional[str] = None
-    action_url: Optional[str] = None
+    alert_event_id: str | None = None
+    cert_id: str | None = None
+    cert_common_name: str | None = None
+    action_url: str | None = None
     metadata: dict = field(default_factory=dict)
 
 
@@ -67,13 +66,11 @@ class NotificationDispatcher:
         """Register a notification backend."""
         self._backends[backend.channel_type] = backend
 
-    def get_backend(self, channel_type: str) -> Optional[NotificationBackend]:
+    def get_backend(self, channel_type: str) -> NotificationBackend | None:
         """Get a registered backend by channel type."""
         return self._backends.get(channel_type)
 
-    async def dispatch(
-        self, message: NotificationMessage, channels: list[dict]
-    ) -> dict[str, bool]:
+    async def dispatch(self, message: NotificationMessage, channels: list[dict]) -> dict[str, bool]:
         """Send a notification through multiple channels.
 
         Args:
@@ -104,7 +101,7 @@ class NotificationDispatcher:
 
 
 # Global dispatcher singleton
-_dispatcher: Optional[NotificationDispatcher] = None
+_dispatcher: NotificationDispatcher | None = None
 
 
 def get_dispatcher() -> NotificationDispatcher:

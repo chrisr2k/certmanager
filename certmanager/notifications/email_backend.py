@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import html
 import smtplib
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 import structlog
+
 from certmanager.notifications.base import NotificationBackend, NotificationMessage
 
 logger = structlog.get_logger()
@@ -65,7 +66,7 @@ class EmailBackend(NotificationBackend):
 
             esc = html.escape
             cert_line = (
-                f'<p><strong>Certificate:</strong> {esc(message.cert_common_name)}</p>'
+                f"<p><strong>Certificate:</strong> {esc(message.cert_common_name)}</p>"
                 if message.cert_common_name
                 else ""
             )

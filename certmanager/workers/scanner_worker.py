@@ -66,7 +66,7 @@ def run_scan_job(self, scan_job_id: str):
     except Exception as exc:
         task_logger.error(f"Scan job {scan_job_id} failed: {exc}")
         # Retry with exponential backoff
-        raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
+        raise self.retry(exc=exc, countdown=60 * (2**self.request.retries)) from exc
 
 
 @shared_task(
@@ -135,9 +135,7 @@ def run_health_checks(self):
         results = _run_async(_run())
         healthy = sum(1 for v in results.values() if v == "healthy")
         unhealthy = sum(1 for v in results.values() if v == "unhealthy")
-        task_logger.info(
-            f"CA health checks complete: {healthy} healthy, {unhealthy} unhealthy"
-        )
+        task_logger.info(f"CA health checks complete: {healthy} healthy, {unhealthy} unhealthy")
         return results
     except Exception as exc:
         task_logger.error(f"Health checks failed: {exc}")
@@ -265,4 +263,4 @@ def scan_single_authority(self, authority_id: str):
         return result
     except Exception as exc:
         task_logger.error(f"Authority scan failed for {authority_id}: {exc}")
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc

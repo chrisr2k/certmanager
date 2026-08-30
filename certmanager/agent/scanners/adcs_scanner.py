@@ -17,9 +17,8 @@ import json
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import structlog
 
@@ -89,9 +88,7 @@ class ADCSLocalScanner(ScannerPlugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=10
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
 
             if b"ok" not in stdout:
                 return HealthStatus(
@@ -113,9 +110,7 @@ class ADCSLocalScanner(ScannerPlugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=30
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
 
             if proc.returncode == 0 and stdout.strip():
                 return HealthStatus(
@@ -130,7 +125,7 @@ class ADCSLocalScanner(ScannerPlugin):
                     detail={"stderr": stderr.decode(errors="replace")[:500]},
                 )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return HealthStatus(
                 status="error",
                 message="PowerShell health check timed out",
@@ -209,14 +204,16 @@ class ADCSLocalScanner(ScannerPlugin):
             metadata={
                 "ca_server": self.ca_server,
                 "ca_name": self.ca_name,
-                "enum_method": "powershell" if not any("CertUtil" in e for e in errors) else "certutil",
+                "enum_method": "powershell"
+                if not any("CertUtil" in e for e in errors)
+                else "certutil",
             },
         )
 
     async def _enumerate_via_powershell(
         self,
         templates: list[str],
-        since: Optional[str],
+        since: str | None,
         include_expired: bool,
         include_revoked: bool,
     ) -> tuple[list[dict], list[str]]:
@@ -255,7 +252,9 @@ class ADCSLocalScanner(ScannerPlugin):
 
         date_filter = ""
         if since:
-            date_filter = f" | Where-Object {{ $_.NotBefore -ge [datetime]'{self._ps_escape(since)}' }}"
+            date_filter = (
+                f" | Where-Object {{ $_.NotBefore -ge [datetime]'{self._ps_escape(since)}' }}"
+            )
 
         ps_lines.append(
             f"  $certs = Get-IssuedRequest -CertificationAuthority $ca "
@@ -264,29 +263,31 @@ class ADCSLocalScanner(ScannerPlugin):
         )
 
         # Serialize to JSON
-        ps_lines.extend([
-            "  $result = @()",
-            "  foreach ($cert in $certs) {",
-            "    $result += @{",
-            "      RequestID = $cert.RequestID",
-            "      SerialNumber = $cert.SerialNumber",
-            "      CommonName = $cert.CommonName",
-            "      NotBefore = $cert.NotBefore.ToString('o')",
-            "      NotAfter = $cert.NotAfter.ToString('o')",
-            "      Template = $cert.CertificateTemplate",
-            "      RequesterName = $cert.RequesterName",
-            "      Subject = $cert.Subject",
-            "      Issuer = $cert.Issuer",
-            "      Thumbprint = $cert.Thumbprint",
-            "      Status = $cert.Status",
-            "    }",
-            "  }",
-            "  ConvertTo-Json -InputObject $result -Depth 3",
-            "} catch {",
-            "  Write-Error $_.Exception.Message",
-            "  exit 1",
-            "}",
-        ])
+        ps_lines.extend(
+            [
+                "  $result = @()",
+                "  foreach ($cert in $certs) {",
+                "    $result += @{",
+                "      RequestID = $cert.RequestID",
+                "      SerialNumber = $cert.SerialNumber",
+                "      CommonName = $cert.CommonName",
+                "      NotBefore = $cert.NotBefore.ToString('o')",
+                "      NotAfter = $cert.NotAfter.ToString('o')",
+                "      Template = $cert.CertificateTemplate",
+                "      RequesterName = $cert.RequesterName",
+                "      Subject = $cert.Subject",
+                "      Issuer = $cert.Issuer",
+                "      Thumbprint = $cert.Thumbprint",
+                "      Status = $cert.Status",
+                "    }",
+                "  }",
+                "  ConvertTo-Json -InputObject $result -Depth 3",
+                "} catch {",
+                "  Write-Error $_.Exception.Message",
+                "  exit 1",
+                "}",
+            ]
+        )
 
         ps_script = "\n".join(ps_lines)
 
@@ -301,10 +302,8 @@ class ADCSLocalScanner(ScannerPlugin):
         )
 
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=120
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except TimeoutError:
             proc.kill()
             return [], ["PowerShell enumeration timed out after 120s"]
 
@@ -322,7 +321,7 @@ class ADCSLocalScanner(ScannerPlugin):
                 start_idx = output.find("[")
                 end_idx = output.rfind("]")
                 if start_idx >= 0 and end_idx > start_idx:
-                    output = output[start_idx:end_idx + 1]
+                    output = output[start_idx : end_idx + 1]
 
             certs = json.loads(output)
             if isinstance(certs, dict):
@@ -333,7 +332,7 @@ class ADCSLocalScanner(ScannerPlugin):
 
     async def _enumerate_via_certutil(
         self,
-        since: Optional[str],
+        since: str | None,
         include_expired: bool,
     ) -> tuple[list[dict], list[str]]:
         """Fallback: enumerate certificates using certutil -view.
@@ -352,7 +351,7 @@ class ADCSLocalScanner(ScannerPlugin):
         cmd = (
             f'certutil -view -restrict "{restrict}" '
             f'-out "RequestID,SerialNumber,CommonName,NotBefore,NotAfter,'
-            f'CertificateTemplate,RequesterName,CertificateSubNameString,'
+            f"CertificateTemplate,RequesterName,CertificateSubNameString,"
             f'CertificateIssuerNameString,CertificateHash,CertificateSerialNumber" CSV'
         )
 
@@ -365,10 +364,8 @@ class ADCSLocalScanner(ScannerPlugin):
         )
 
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=120
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except TimeoutError:
             proc.kill()
             return [], ["CertUtil enumeration timed out after 120s"]
 
@@ -417,19 +414,23 @@ class ADCSLocalScanner(ScannerPlugin):
                             cert_data[header] = row[i].strip().strip('"')
 
                     # Map to standard fields
-                    certs.append({
-                        "RequestID": cert_data.get("RequestID", ""),
-                        "SerialNumber": cert_data.get("SerialNumber", cert_data.get("CertificateSerialNumber", "")),
-                        "CommonName": cert_data.get("CommonName", ""),
-                        "NotBefore": cert_data.get("NotBefore", ""),
-                        "NotAfter": cert_data.get("NotAfter", ""),
-                        "Template": cert_data.get("CertificateTemplate", ""),
-                        "RequesterName": cert_data.get("RequesterName", ""),
-                        "Subject": cert_data.get("CertificateSubNameString", ""),
-                        "Issuer": cert_data.get("CertificateIssuerNameString", ""),
-                        "Thumbprint": cert_data.get("CertificateHash", ""),
-                        "Status": "Issued",
-                    })
+                    certs.append(
+                        {
+                            "RequestID": cert_data.get("RequestID", ""),
+                            "SerialNumber": cert_data.get(
+                                "SerialNumber", cert_data.get("CertificateSerialNumber", "")
+                            ),
+                            "CommonName": cert_data.get("CommonName", ""),
+                            "NotBefore": cert_data.get("NotBefore", ""),
+                            "NotAfter": cert_data.get("NotAfter", ""),
+                            "Template": cert_data.get("CertificateTemplate", ""),
+                            "RequesterName": cert_data.get("RequesterName", ""),
+                            "Subject": cert_data.get("CertificateSubNameString", ""),
+                            "Issuer": cert_data.get("CertificateIssuerNameString", ""),
+                            "Thumbprint": cert_data.get("CertificateHash", ""),
+                            "Status": "Issued",
+                        }
+                    )
 
         return certs
 
@@ -477,7 +478,7 @@ class ADCSLocalScanner(ScannerPlugin):
         }
 
     @staticmethod
-    def _parse_date(date_str) -> Optional[datetime]:
+    def _parse_date(date_str) -> datetime | None:
         """Parse a date string from PowerShell/certutil output."""
         if not date_str:
             return None
@@ -494,7 +495,7 @@ class ADCSLocalScanner(ScannerPlugin):
 
         for fmt in formats:
             try:
-                return datetime.strptime(date_str.strip(), fmt).replace(tzinfo=timezone.utc)
+                return datetime.strptime(date_str.strip(), fmt).replace(tzinfo=UTC)
             except ValueError:
                 continue
 

@@ -17,18 +17,17 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
-from typing import Dict, Optional, Tuple
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 # Rate limit configuration: (max_requests, window_seconds)
-RATE_LIMITS: Dict[str, Tuple[int, int]] = {
-    "auth": (20, 60),       # 20 requests per minute
-    "read": (300, 60),      # 300 GET requests per minute
-    "write": (60, 60),      # 60 write requests per minute
-    "agent": (120, 60),     # 120 agent requests per minute
+RATE_LIMITS: dict[str, tuple[int, int]] = {
+    "auth": (20, 60),  # 20 requests per minute
+    "read": (300, 60),  # 300 GET requests per minute
+    "write": (60, 60),  # 60 write requests per minute
+    "agent": (120, 60),  # 120 agent requests per minute
 }
 
 # Path prefix → rate limit category
@@ -91,7 +90,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "retry_after": window,
                 },
             )
-        if redis_verdict is None and not self._check_in_memory(client_key, category, max_req, window):
+        if redis_verdict is None and not self._check_in_memory(
+            client_key, category, max_req, window
+        ):
             return JSONResponse(
                 status_code=429,
                 content={
@@ -106,7 +107,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def _check_redis(
         self, client_key: str, category: str, max_req: int, window: int
-    ) -> Optional[bool]:
+    ) -> bool | None:
         """Check rate limit using Redis token bucket.
 
         Returns:
@@ -128,9 +129,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Redis unreachable — fall back to in-memory
             return None
 
-    def _check_in_memory(
-        self, client_key: str, category: str, max_req: int, window: int
-    ) -> bool:
+    def _check_in_memory(self, client_key: str, category: str, max_req: int, window: int) -> bool:
         """In-memory rate limit check. Returns True if allowed."""
         now = time.time()
         bucket = self._in_memory[client_key][category]

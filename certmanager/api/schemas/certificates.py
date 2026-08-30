@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -11,58 +10,58 @@ from pydantic import BaseModel, Field
 class CertificateCreate(BaseModel):
     """Manual certificate registration (metadata only — no private key)."""
 
-    common_name: Optional[str] = None
-    subject: Optional[str] = None
-    issuer: Optional[str] = None
-    serial_number: Optional[str] = None
-    thumbprint_sha256: Optional[str] = None
+    common_name: str | None = None
+    subject: str | None = None
+    issuer: str | None = None
+    serial_number: str | None = None
+    thumbprint_sha256: str | None = None
     not_before: datetime
     not_after: datetime
     validity_days: int
-    cert_type: Optional[str] = None
-    key_algorithm: Optional[str] = None
-    signature_algorithm: Optional[str] = None
-    sans: Optional[list[str]] = None
+    cert_type: str | None = None
+    key_algorithm: str | None = None
+    signature_algorithm: str | None = None
+    sans: list[str] | None = None
     source_type: str = "manual"
     source_detail: dict = Field(default_factory=dict)
-    datacenter_id: Optional[str] = None
-    owner: Optional[str] = None
+    datacenter_id: str | None = None
+    owner: str | None = None
     tags: dict = Field(default_factory=dict)
 
 
 class CertificateUpdate(BaseModel):
     """Fields that can be updated on a certificate record."""
 
-    owner: Optional[str] = None
-    tags: Optional[dict] = None
-    status: Optional[str] = None
-    datacenter_id: Optional[str] = None
+    owner: str | None = None
+    tags: dict | None = None
+    status: str | None = None
+    datacenter_id: str | None = None
 
 
 class CertificateResponse(BaseModel):
     """Full certificate record (never includes private key)."""
 
     id: str
-    common_name: Optional[str] = None
-    subject: Optional[str] = None
-    issuer: Optional[str] = None
-    serial_number: Optional[str] = None
-    thumbprint_sha256: Optional[str] = None
+    common_name: str | None = None
+    subject: str | None = None
+    issuer: str | None = None
+    serial_number: str | None = None
+    thumbprint_sha256: str | None = None
     not_before: datetime
     not_after: datetime
     validity_days: int
-    cert_type: Optional[str] = None
-    key_algorithm: Optional[str] = None
-    signature_algorithm: Optional[str] = None
-    sans: Optional[list[str]] = None
+    cert_type: str | None = None
+    key_algorithm: str | None = None
+    signature_algorithm: str | None = None
+    sans: list[str] | None = None
     source_type: str
-    source_ca_id: Optional[str] = None
+    source_ca_id: str | None = None
     source_detail: dict
     status: str
     is_wildcard: bool
     is_ca: bool
-    datacenter_id: Optional[str] = None
-    owner: Optional[str] = None
+    datacenter_id: str | None = None
+    owner: str | None = None
     tags: dict
     first_seen_at: datetime
     last_seen_at: datetime

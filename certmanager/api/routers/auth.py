@@ -89,9 +89,7 @@ async def _store_pending_mfa_secret(user_id: str, secret: str) -> None:
     client = await get_redis()
     if client is not None:
         try:
-            await client.set(
-                f"certmgmt:mfa_pending:{user_id}", secret, ex=MFA_PENDING_TTL_SECONDS
-            )
+            await client.set(f"certmgmt:mfa_pending:{user_id}", secret, ex=MFA_PENDING_TTL_SECONDS)
             return
         except Exception:
             pass
@@ -179,7 +177,7 @@ async def refresh(request: RefreshRequest, db: AsyncSession = Depends(get_db)):
     try:
         payload = decode_token(request.refresh_token)
     except Exception:
-        raise AuthenticationError("Invalid or expired refresh token")
+        raise AuthenticationError("Invalid or expired refresh token") from None
 
     if payload.get("type") != "refresh":
         raise AuthenticationError("Not a refresh token")
@@ -293,9 +291,7 @@ async def mfa_verify(
     await _clear_pending_mfa_secret(current_user.id)
 
     # Generate recovery codes (8 one-time codes) — only HASHES are stored
-    recovery_codes = [
-        f"{secrets.token_hex(4)}-{secrets.token_hex(4)}" for _ in range(8)
-    ]
+    recovery_codes = [f"{secrets.token_hex(4)}-{secrets.token_hex(4)}" for _ in range(8)]
     current_user.recovery_codes = [_hash_recovery_code(c) for c in recovery_codes]
 
     return MFAVerifyResponse(

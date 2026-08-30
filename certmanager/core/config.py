@@ -6,9 +6,6 @@ following the same pattern as entra-pentest's config module.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -75,7 +72,9 @@ class Settings(BaseSettings):
     )
 
     # Environment
-    environment: str = Field(default="development", description="development | staging | production")
+    environment: str = Field(
+        default="development", description="development | staging | production"
+    )
 
     # Sub-settings
     api_host: str = Field(default="0.0.0.0")
@@ -98,7 +97,7 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def reject_insecure_production_defaults(self) -> "Settings":
+    def reject_insecure_production_defaults(self) -> Settings:
         """Refuse to boot production/staging with default secrets or dev DB credentials."""
         if self.environment == "development":
             return self

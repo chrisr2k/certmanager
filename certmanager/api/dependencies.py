@@ -10,8 +10,6 @@ Provides:
 
 from __future__ import annotations
 
-from typing import AsyncGenerator
-
 from fastapi import Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,9 +19,7 @@ from certmanager.core.exceptions import AuthenticationError, AuthorizationError
 from certmanager.core.models import User
 
 
-async def get_current_user(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> User:
+async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     """Dependency: extract and validate the current user from the request state.
 
     The RBAC middleware has already validated the JWT (or X-API-Key) and set

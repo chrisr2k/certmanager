@@ -14,16 +14,15 @@ from __future__ import annotations
 import csv
 import io
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 import structlog
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from certmanager.core.models import Certificate, CertificateAuthority, Datacenter
+from certmanager.core.models import Certificate, Datacenter
 
 logger = structlog.get_logger()
 
@@ -43,7 +42,7 @@ class ReportingService:
     async def generate_report(
         self,
         report_type: str,
-        parameters: Optional[dict] = None,
+        parameters: dict | None = None,
         output_format: str = "pdf",
     ) -> tuple[bytes, str]:
         """Generate a report.
@@ -69,13 +68,11 @@ class ReportingService:
         else:
             raise ValueError(f"Unknown report type: {report_type}")
 
-    async def _expiry_summary(
-        self, params: dict, output_format: str
-    ) -> tuple[bytes, str]:
+    async def _expiry_summary(self, params: dict, output_format: str) -> tuple[bytes, str]:
         """Generate a certificate expiry summary report."""
-        now = datetime.now(timezone.utc)
-        thirty_days = now + timedelta(days=30)
-        seven_days = now + timedelta(days=7)
+        now = datetime.now(UTC)
+        now + timedelta(days=30)
+        now + timedelta(days=7)
 
         # Base query
         query = select(Certificate)
@@ -93,23 +90,27 @@ class ReportingService:
         for cert in all_certs:
             days_left = (cert.not_after - now).days
             if cert.status == "expired" or days_left < 0:
-                expired_certs.append({
-                    "common_name": cert.common_name,
-                    "issuer": cert.issuer,
-                    "not_after": cert.not_after.isoformat(),
-                    "days_left": days_left,
-                    "source_type": cert.source_type,
-                    "datacenter_name": cert.datacenter.name if cert.datacenter else None,
-                })
+                expired_certs.append(
+                    {
+                        "common_name": cert.common_name,
+                        "issuer": cert.issuer,
+                        "not_after": cert.not_after.isoformat(),
+                        "days_left": days_left,
+                        "source_type": cert.source_type,
+                        "datacenter_name": cert.datacenter.name if cert.datacenter else None,
+                    }
+                )
             elif days_left <= 30:
-                expiring_soon.append({
-                    "common_name": cert.common_name,
-                    "issuer": cert.issuer,
-                    "not_after": cert.not_after.isoformat(),
-                    "days_left": days_left,
-                    "source_type": cert.source_type,
-                    "datacenter_name": cert.datacenter.name if cert.datacenter else None,
-                })
+                expiring_soon.append(
+                    {
+                        "common_name": cert.common_name,
+                        "issuer": cert.issuer,
+                        "not_after": cert.not_after.isoformat(),
+                        "days_left": days_left,
+                        "source_type": cert.source_type,
+                        "datacenter_name": cert.datacenter.name if cert.datacenter else None,
+                    }
+                )
 
         expiring_soon.sort(key=lambda c: c["days_left"])
         expired_certs.sort(key=lambda c: c["not_after"], reverse=True)
@@ -120,13 +121,15 @@ class ReportingService:
         by_datacenter = []
         for dc in dcs:
             dc_certs = [c for c in all_certs if str(c.datacenter_id) == str(dc.id)]
-            by_datacenter.append({
-                "name": dc.name,
-                "total": len(dc_certs),
-                "active": sum(1 for c in dc_certs if c.status == "active"),
-                "expiring_30d": sum(1 for c in dc_certs if 0 <= (c.not_after - now).days <= 30),
-                "expired": sum(1 for c in dc_certs if c.status == "expired"),
-            })
+            by_datacenter.append(
+                {
+                    "name": dc.name,
+                    "total": len(dc_certs),
+                    "active": sum(1 for c in dc_certs if c.status == "active"),
+                    "expiring_30d": sum(1 for c in dc_certs if 0 <= (c.not_after - now).days <= 30),
+                    "expired": sum(1 for c in dc_certs if c.status == "expired"),
+                }
+            )
 
         # Summary
         expiring_7d_count = sum(1 for c in expiring_soon if c["days_left"] <= 7)
@@ -135,7 +138,8 @@ class ReportingService:
             "generated_at": now.strftime("%Y-%m-%d %H:%M UTC"),
             "period_start": (now - timedelta(days=90)).strftime("%Y-%m-%d"),
             "period_end": now.strftime("%Y-%m-%d"),
-            "datacenters": [dc.name for dc in dcs if dc_ids and str(dc.id) in dc_ids] or [dc.name for dc in dcs],
+            "datacenters": [dc.name for dc in dcs if dc_ids and str(dc.id) in dc_ids]
+            or [dc.name for dc in dcs],
             "summary": {
                 "total": len(all_certs),
                 "active": sum(1 for c in all_certs if c.status == "active"),
@@ -150,9 +154,7 @@ class ReportingService:
 
         return await self._render(template_data, "expiry_summary", output_format)
 
-    async def _full_inventory(
-        self, params: dict, output_format: str
-    ) -> tuple[bytes, str]:
+    async def _full_inventory(self, params: dict, output_format: str) -> tuple[bytes, str]:
         """Generate a full certificate inventory dump."""
         query = select(Certificate).order_by(Certificate.not_after.asc())
 
@@ -185,7 +187,7 @@ class ReportingService:
             for c in certs
         ]
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         template_data = {
             "generated_at": now.strftime("%Y-%m-%d %H:%M UTC"),
             "datacenter_filter": params.get("datacenter_filter", ""),
@@ -195,11 +197,9 @@ class ReportingService:
 
         return await self._render(template_data, "full_inventory", output_format)
 
-    async def _change_report(
-        self, params: dict, output_format: str
-    ) -> tuple[bytes, str]:
+    async def _change_report(self, params: dict, output_format: str) -> tuple[bytes, str]:
         """Generate a report of certificate changes in a time period."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         days = params.get("days", 7)
         since = now - timedelta(days=days)
 
@@ -224,8 +224,7 @@ class ReportingService:
 
         # Recently revoked
         revoked_result = await self.db.execute(
-            select(Certificate)
-            .where(
+            select(Certificate).where(
                 Certificate.status == "revoked",
                 Certificate.updated_at >= since,
             )
@@ -267,14 +266,12 @@ class ReportingService:
 
         return await self._render(template_data, "change_report", output_format)
 
-    async def _audit_export(
-        self, params: dict, output_format: str
-    ) -> tuple[bytes, str]:
+    async def _audit_export(self, params: dict, output_format: str) -> tuple[bytes, str]:
         """Export audit log entries as CSV or JSON."""
         from certmanager.core.models import AuditLog
 
         days = params.get("days", 30)
-        since = datetime.now(timezone.utc) - timedelta(days=days)
+        since = datetime.now(UTC) - timedelta(days=days)
 
         result = await self.db.execute(
             select(AuditLog)
@@ -287,27 +284,38 @@ class ReportingService:
         if output_format == "csv":
             output = io.StringIO()
             writer = csv.writer(output)
-            writer.writerow([
-                "ID", "Event Type", "Actor Type", "Actor Email",
-                "Resource Type", "Action", "Details", "IP", "Timestamp"
-            ])
+            writer.writerow(
+                [
+                    "ID",
+                    "Event Type",
+                    "Actor Type",
+                    "Actor Email",
+                    "Resource Type",
+                    "Action",
+                    "Details",
+                    "IP",
+                    "Timestamp",
+                ]
+            )
             for log in logs:
-                writer.writerow([
-                    log.id,
-                    log.event_type,
-                    log.actor_type,
-                    log.actor_email or "",
-                    log.resource_type or "",
-                    log.action,
-                    json.dumps(log.details or {}),
-                    log.ip_address or "",
-                    log.created_at.isoformat() if log.created_at else "",
-                ])
+                writer.writerow(
+                    [
+                        log.id,
+                        log.event_type,
+                        log.actor_type,
+                        log.actor_email or "",
+                        log.resource_type or "",
+                        log.action,
+                        json.dumps(log.details or {}),
+                        log.ip_address or "",
+                        log.created_at.isoformat() if log.created_at else "",
+                    ]
+                )
             return output.getvalue().encode("utf-8"), "text/csv"
 
         elif output_format == "pdf":
             template_data = {
-                "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "generated_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
                 "period_start": since.strftime("%Y-%m-%d"),
                 "summary": {"total_events": len(logs)},
                 "logs": [
@@ -360,7 +368,9 @@ class ReportingService:
         if output_format == "csv":
             return self._render_csv(template_data, template_name)
         elif output_format == "json":
-            return json.dumps(template_data, indent=2, default=str).encode("utf-8"), "application/json"
+            return json.dumps(template_data, indent=2, default=str).encode(
+                "utf-8"
+            ), "application/json"
         else:
             return self._render_pdf(template_data, template_name)
 

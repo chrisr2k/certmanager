@@ -11,14 +11,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from certmanager.connectors.base import CertificateRecord
-from certmanager.core.models import Certificate, CertificateAuthority
+from certmanager.core.models import Certificate
 from certmanager.services.certificate_service import CertificateService
 
 
@@ -53,9 +51,7 @@ class TestCertificateService:
         assert stats["errors"] == 0
 
         cert = (
-            await db_session.execute(
-                select(Certificate).where(Certificate.common_name == "a.test")
-            )
+            await db_session.execute(select(Certificate).where(Certificate.common_name == "a.test"))
         ).scalar_one()
         assert cert.validity_days == 365
 
@@ -77,9 +73,7 @@ class TestCertificateService:
         assert stats["errors"] == 0
 
         cert = (
-            await db_session.execute(
-                select(Certificate).where(Certificate.common_name == "b.test")
-            )
+            await db_session.execute(select(Certificate).where(Certificate.common_name == "b.test"))
         ).scalar_one()
         assert cert.validity_days == 365  # 355 + 10 days
 
@@ -159,7 +153,7 @@ class TestRateLimiter:
 
         middleware = RateLimitMiddleware(_app)
         # 3 allowed, then blocked (window 60s)
-        for i in range(3):
+        for _i in range(3):
             assert middleware._check_in_memory("client-1", "auth", 3, 60) is True
         assert middleware._check_in_memory("client-1", "auth", 3, 60) is False
         # Different client unaffected

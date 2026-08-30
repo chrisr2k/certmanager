@@ -6,15 +6,13 @@ given a CA configuration record, returns a configured CAConnector instance.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from certmanager.connectors.base import CAConnector, ConnectorConfigError
 from certmanager.core.models import CertificateAuthority
 
 
 def get_connector(
     authority: CertificateAuthority,
-    credential_store: Optional["CredentialStore"] = None,
+    credential_store: CredentialStore | None = None,
 ) -> CAConnector:
     """Create a configured CA connector from a CertificateAuthority record.
 
@@ -45,13 +43,12 @@ def get_connector(
 
     else:
         raise ConnectorConfigError(
-            f"Unknown CA type: '{ca_type}'. "
-            f"Supported types: aws_acm, azure_keyvault, adcs"
+            f"Unknown CA type: '{ca_type}'. Supported types: aws_acm, azure_keyvault, adcs"
         )
 
 
 def _create_aws_connector(
-    config: dict, name: str, credential_store: Optional["CredentialStore"] = None
+    config: dict, name: str, credential_store: CredentialStore | None = None
 ) -> CAConnector:
     """Create an AWS ACM connector from config."""
     from certmanager.connectors.aws_acm import AWSACMConnector
@@ -88,7 +85,7 @@ def _create_aws_connector(
 
 
 def _create_azure_connector(
-    config: dict, name: str, credential_store: Optional["CredentialStore"] = None
+    config: dict, name: str, credential_store: CredentialStore | None = None
 ) -> CAConnector:
     """Create an Azure Key Vault connector from config."""
     from certmanager.connectors.azure_keyvault import AzureKeyVaultConnector
@@ -120,7 +117,7 @@ def _create_azure_connector(
 
 
 def _create_adcs_connector(
-    config: dict, name: str, credential_store: Optional["CredentialStore"] = None
+    config: dict, name: str, credential_store: CredentialStore | None = None
 ) -> CAConnector:
     """Create an AD CS connector from config.
 
@@ -135,9 +132,7 @@ def _create_adcs_connector(
     agent_base_url = config.get("agent_base_url")
 
     if not agent_id:
-        raise ConnectorConfigError(
-            f"AD CS CA '{name}' is missing required 'agent_id' in config"
-        )
+        raise ConnectorConfigError(f"AD CS CA '{name}' is missing required 'agent_id' in config")
 
     # Agent API token resolved from credential store
     api_token = None
@@ -165,7 +160,7 @@ class CredentialStore:
     def __init__(self):
         self._cache: dict[str, dict] = {}
 
-    def get(self, lookup_key: str) -> Optional[dict]:
+    def get(self, lookup_key: str) -> dict | None:
         """Retrieve decrypted credentials for a lookup key."""
         if lookup_key in self._cache:
             return self._cache[lookup_key]

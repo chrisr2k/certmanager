@@ -31,7 +31,7 @@ async def list_api_keys(
 ):
     """List the current user's API keys (prefix and metadata only — never the full key)."""
     result = await db.execute(
-        select(APIKey).where(APIKey.user_id == current_user.id, APIKey.is_active == True)
+        select(APIKey).where(APIKey.user_id == current_user.id, APIKey.is_active)
     )
     keys = result.scalars().all()
 

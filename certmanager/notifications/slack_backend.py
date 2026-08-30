@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import structlog
+
 from certmanager.notifications.base import NotificationBackend, NotificationMessage
 
 logger = structlog.get_logger()
@@ -54,26 +55,33 @@ class SlackBackend(NotificationBackend):
             ]
 
             if message.cert_common_name:
-                blocks.append({
-                    "type": "section",
-                    "fields": [
-                        {"type": "mrkdwn", "text": f"*Certificate:*\n{message.cert_common_name}"},
-                        {"type": "mrkdwn", "text": f"*Severity:*\n{message.severity.upper()}"},
-                    ],
-                })
+                blocks.append(
+                    {
+                        "type": "section",
+                        "fields": [
+                            {
+                                "type": "mrkdwn",
+                                "text": f"*Certificate:*\n{message.cert_common_name}",
+                            },
+                            {"type": "mrkdwn", "text": f"*Severity:*\n{message.severity.upper()}"},
+                        ],
+                    }
+                )
 
             if message.action_url:
-                blocks.append({
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "View in CertManager"},
-                            "url": message.action_url,
-                            "style": "primary",
-                        }
-                    ],
-                })
+                blocks.append(
+                    {
+                        "type": "actions",
+                        "elements": [
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "View in CertManager"},
+                                "url": message.action_url,
+                                "style": "primary",
+                            }
+                        ],
+                    }
+                )
 
             payload = {
                 "attachments": [
@@ -88,7 +96,9 @@ class SlackBackend(NotificationBackend):
                 payload["channel"] = config["channel"]
 
             async with aiohttp.ClientSession() as session:
-                async with session.post(webhook_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.post(
+                    webhook_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
                     if resp.status in (200, 204):
                         logger.info("slack_sent", title=message.title)
                         return True

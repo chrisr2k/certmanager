@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -18,12 +17,12 @@ router = APIRouter()
 
 @router.get("")
 async def list_audit_logs(
-    actor_id: Optional[str] = Query(default=None),
-    resource_type: Optional[str] = Query(default=None),
-    resource_id: Optional[str] = Query(default=None),
-    event_type: Optional[str] = Query(default=None),
-    from_date: Optional[datetime] = Query(default=None),
-    to_date: Optional[datetime] = Query(default=None),
+    actor_id: str | None = Query(default=None),
+    resource_type: str | None = Query(default=None),
+    resource_id: str | None = Query(default=None),
+    event_type: str | None = Query(default=None),
+    from_date: datetime | None = Query(default=None),
+    to_date: datetime | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
     db: AsyncSession = Depends(get_db),

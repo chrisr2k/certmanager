@@ -3,6 +3,7 @@
 import pytest
 from jose import JWTError
 
+from certmanager.core.crypto import decrypt_value, encrypt_value
 from certmanager.core.security import (
     create_access_token,
     create_refresh_token,
@@ -10,7 +11,6 @@ from certmanager.core.security import (
     hash_password,
     verify_password,
 )
-from certmanager.core.crypto import encrypt_value, decrypt_value
 
 
 class TestPasswordHashing:
@@ -50,24 +50,24 @@ class TestJWT:
 
     def test_token_family_rotation(self):
         token1, family1 = create_refresh_token(subject="user-789")
-        token2, family2 = create_refresh_token(
-            subject="user-789", token_family=family1
-        )
+        token2, family2 = create_refresh_token(subject="user-789", token_family=family1)
 
         assert family1 == family2
         assert token1 != token2  # Tokens are different even in same family
 
     def test_expired_token_rejected(self, monkeypatch):
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
 
-        token = create_access_token(
-            subject="test", expires_delta=timedelta(seconds=-1)
-        )
+        token = create_access_token(subject="test", expires_delta=timedelta(seconds=-1))
         with pytest.raises(JWTError):
             decode_token(token)
 
     def test_extra_claims_in_token(self):
-        extra = {"email": "test@example.com", "roles": ["admin"], "permissions": ["certificates:read"]}
+        extra = {
+            "email": "test@example.com",
+            "roles": ["admin"],
+            "permissions": ["certificates:read"],
+        }
         token = create_access_token(subject="user-1", extra_claims=extra)
         claims = decode_token(token)
 

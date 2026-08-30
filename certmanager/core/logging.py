@@ -31,7 +31,9 @@ _SENSITIVE_FIELD_NAMES = {
 
 # Key=value-ish secret patterns that could appear inside message strings
 _SECRET_VALUE_PATTERNS = [
-    re.compile(r"(password|passwd|psk|secret|token|api_key|authorization)(=|:)\s*\S+", re.IGNORECASE),
+    re.compile(
+        r"(password|passwd|psk|secret|token|api_key|authorization)(=|:)\s*\S+", re.IGNORECASE
+    ),
     re.compile(r"Bearer\s+\S+", re.IGNORECASE),
 ]
 
@@ -39,7 +41,9 @@ _SECRET_VALUE_PATTERNS = [
 def _redact(text: str) -> str:
     """Scrub secret-looking patterns from a rendered string."""
     for pattern in _SECRET_VALUE_PATTERNS:
-        text = pattern.sub(lambda m: f"{m.group(1)}=[REDACTED]" if m.lastindex else "[REDACTED]", text)
+        text = pattern.sub(
+            lambda m: f"{m.group(1)}=[REDACTED]" if m.lastindex else "[REDACTED]", text
+        )
     return text
 
 
@@ -70,9 +74,7 @@ def configure_logging() -> None:
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         _redact_processor,
-        structlog.dev.ConsoleRenderer()
-        if not is_json
-        else structlog.processors.JSONRenderer(),
+        structlog.dev.ConsoleRenderer() if not is_json else structlog.processors.JSONRenderer(),
     ]
 
     # Configure structlog

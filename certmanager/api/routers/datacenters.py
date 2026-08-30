@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +15,7 @@ router = APIRouter()
 
 @router.get("")
 async def list_datacenters(
-    is_active: Optional[bool] = None,
+    is_active: bool | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -52,16 +50,14 @@ async def list_datacenters(
 async def create_datacenter(
     name: str,
     code: str,
-    location: Optional[str] = None,
+    location: str | None = None,
     timezone: str = "UTC",
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Register a new datacenter."""
     existing = await db.execute(
-        select(Datacenter).where(
-            (Datacenter.name == name) | (Datacenter.code == code)
-        )
+        select(Datacenter).where((Datacenter.name == name) | (Datacenter.code == code))
     )
     if existing.scalar_one_or_none():
         raise ConflictError(f"Datacenter '{name}' or code '{code}' already exists")
@@ -94,7 +90,12 @@ async def get_datacenter(
             "timezone": dc.timezone,
             "is_active": dc.is_active,
             "certificate_authorities": [
-                {"id": ca.id, "name": ca.name, "ca_type": ca.ca_type, "health_status": ca.health_status}
+                {
+                    "id": ca.id,
+                    "name": ca.name,
+                    "ca_type": ca.ca_type,
+                    "health_status": ca.health_status,
+                }
                 for ca in dc.certificate_authorities
             ],
             "agents": [
@@ -108,10 +109,10 @@ async def get_datacenter(
 @router.patch("/{dc_id}")
 async def update_datacenter(
     dc_id: str,
-    name: Optional[str] = None,
-    location: Optional[str] = None,
-    timezone: Optional[str] = None,
-    is_active: Optional[bool] = None,
+    name: str | None = None,
+    location: str | None = None,
+    timezone: str | None = None,
+    is_active: bool | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
