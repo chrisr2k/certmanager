@@ -1,0 +1,107 @@
+# Production deployment — used on the OCI host (/opt/certmanager).
+# Everything is bound to localhost only; expose the frontend publicly via a
+# TLS reverse proxy in front of it. Secrets live in .env (chmod 600).
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: certmanager-postgres
+    env_file: .env
+    environment:
+      POSTGRES_USER: certmanager
+      POSTGRES_DB: certmanager
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No published ports — internal to the compose network only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U certmanager"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: certmanager-redis
+    command: redis-server --appendonly yes --save 60 1000
+    volumes:
+      - redisdata:/data
+    # No published ports — internal to the compose network only
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: certmanager-api
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=5).status==200 else 1)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    command: >
+      sh -c "python -m alembic -c alembic/alembic.ini upgrade head &&
+             python -c 'from certmanager.core.seed import seed_all; import asyncio; from certmanager.core.database import get_session_factory; asyncio.run(seed_all(get_session_factory()()))' &&
+             uvicorn certmanager.api.app:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: certmanager-worker
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - reports:/app/reports
+    command: celery -A certmanager.workers.celery_app worker --loglevel=info --concurrency=2
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: certmanager-beat
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A certmanager.workers.celery_app beat --loglevel=info
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+      target: production
+    container_name: certmanager-frontend
+    ports:
+      - "127.0.0.1:8081:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  reports:

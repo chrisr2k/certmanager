@@ -12,6 +12,8 @@ Creates 4 roles:
 
 from __future__ import annotations
 
+import os
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -122,7 +124,13 @@ async def seed_roles_and_permissions(db: AsyncSession) -> dict[str, Role]:
 async def seed_admin_user(db: AsyncSession, email: str = None, password: str = None) -> User:
     """Create the default admin user. Idempotent — skips if exists."""
     email = email or DEFAULT_ADMIN_EMAIL
-    password = password or DEFAULT_ADMIN_PASSWORD
+    # Production deployments must supply CERTMGMT_SEED_ADMIN_PASSWORD —
+    # never seed a public instance with the well-known default.
+    password = (
+        password
+        or os.environ.get("CERTMGMT_SEED_ADMIN_PASSWORD")
+        or DEFAULT_ADMIN_PASSWORD
+    )
 
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()

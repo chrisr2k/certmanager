@@ -1,7 +1,9 @@
 import axios from 'axios';
 import type { AxiosRequestConfig } from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Empty string (production, behind nginx /api proxy) stays relative;
+// only null/undefined falls back to the local dev server.
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
 const apiClient = axios.create({
   baseURL: `${API_BASE}/api/v1`,

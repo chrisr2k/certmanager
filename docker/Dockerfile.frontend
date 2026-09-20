@@ -17,6 +17,12 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
+# Empty default = relative API URLs, resolved by the nginx /api proxy.
+# Override with --build-arg VITE_API_URL=https://api.example.com for
+# cross-origin deployments.
+ARG VITE_API_URL=""
+ENV VITE_API_URL=$VITE_API_URL
+
 COPY package.json package-lock.json* ./
 RUN npm ci || npm install
 
