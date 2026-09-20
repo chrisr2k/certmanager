@@ -1,5 +1,5 @@
-import React from 'react';
-import { Card, Collapse, Table, Tag, Button, Space, Typography, Row, Col, Statistic, Badge, Descriptions, Progress } from 'antd';
+import React, { useState } from 'react';
+import { Card, Collapse, Table, Tag, Button, Space, Typography, Row, Col, Statistic, Badge, Descriptions, Progress, Modal, Form, Input, message } from 'antd';
 import {
   PlusOutlined,
   GlobalOutlined,
@@ -10,9 +10,9 @@ import {
   CloseCircleOutlined,
   ExclamationCircleOutlined,
 } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { getEnveloped } from '../../api/client';
+import { getEnveloped, default as apiClient } from '../../api/client';
 import TopologyGraph from '../../components/charts/TopologyGraph';
 
 const { Title, Text } = Typography;
@@ -20,6 +20,9 @@ const { Panel } = Collapse;
 
 export default function DatacentersList() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [addOpen, setAddOpen] = useState(false);
+  const [addForm] = Form.useForm();
 
   // Topology includes DCs + CAs + Agents
   const { data: topology, isLoading } = useQuery({
@@ -32,6 +35,22 @@ export default function DatacentersList() {
 
   const datacenters = topology?.datacenters || [];
   const summary = topology?.summary || {};
+
+  const createMutation = useMutation({
+    mutationFn: (values: { name: string; code: string; location?: string }) =>
+      apiClient.post('/datacenters', values),
+    onSuccess: () => {
+      message.success('Datacenter created');
+      setAddOpen(false);
+      addForm.resetFields();
+      queryClient.invalidateQueries({ queryKey: ['topology-full'] });
+    },
+  });
+
+  const handleAdd = () => {
+    addForm.resetFields();
+    setAddOpen(true);
+  };
 
   const caColumns = [
     { title: 'Name', dataIndex: 'name', key: 'name' },
@@ -110,7 +129,7 @@ export default function DatacentersList() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={3} style={{ margin: 0 }}>Datacenter Topology</Title>
         <Space>
-          <Button type="primary" icon={<PlusOutlined />}>Add Datacenter</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Add Datacenter</Button>
         </Space>
       </div>
 
@@ -249,10 +268,47 @@ export default function DatacentersList() {
           <div style={{ textAlign: 'center', padding: 40, color: '#8c8c8c' }}>
             <GlobalOutlined style={{ fontSize: 48 }} />
             <div style={{ marginTop: 12, fontSize: 16 }}>No datacenters configured</div>
-            <Button type="primary" style={{ marginTop: 12 }}>Add your first datacenter</Button>
+            <Button type="primary" style={{ marginTop: 12 }} onClick={handleAdd}>Add your first datacenter</Button>
           </div>
         </Card>
       )}
+
+      <Modal
+        title="Add Datacenter"
+        open={addOpen}
+        onOk={() => addForm.submit()}
+        confirmLoading={createMutation.isPending}
+        onCancel={() => setAddOpen(false)}
+        okText="Create"
+      >
+        <Form
+          form={addForm}
+          layout="vertical"
+          onFinish={(values) => createMutation.mutate(values)}
+        >
+          <Form.Item
+            name="name"
+            label="Name"
+            rules={[{ required: true, message: 'Name is required' }]}
+          >
+            <Input placeholder="e.g. Berlin DC" autoFocus />
+          </Form.Item>
+          <Form.Item
+            name="code"
+            label="Code"
+            tooltip="Short unique code used during agent registration"
+            rules={[
+              { required: true, message: 'Code is required' },
+              { pattern: /^[a-z0-9-]+$/, message: 'Lowercase letters, digits, hyphens only' },
+            ]}
+          >
+            <Input placeholder="e.g. ber" />
+          </Form.Item>
+          <Form.Item name="location" label="Location">
+            <Input placeholder="e.g. Berlin, Germany (optional)" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }
