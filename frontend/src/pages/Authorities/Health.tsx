@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card, Table, Tag, Button, Space, Typography, Row, Col,
@@ -17,11 +17,13 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { getEnveloped } from '../../api/client';
 import HealthTimeline from '../../components/charts/HealthTimeline';
+import AddAuthorityModal from '../../components/AddAuthorityModal';
 
 const { Title, Text } = Typography;
 
 export default function CAHealthDashboard() {
   const navigate = useNavigate();
+  const [addOpen, setAddOpen] = useState(false);
 
   const { data: health, isLoading, refetch } = useQuery({
     queryKey: ['health-dashboard'],
@@ -125,7 +127,7 @@ export default function CAHealthDashboard() {
         <Title level={3} style={{ margin: 0 }}><HeartOutlined /> CA Health Dashboard</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>Refresh</Button>
-          <Button type="primary" icon={<PlusOutlined />}>Add Authority</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>Add Authority</Button>
         </Space>
       </div>
 
@@ -186,7 +188,7 @@ export default function CAHealthDashboard() {
         {authorities.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Empty description="No certificate authorities configured" />
-            <Button type="primary" style={{ marginTop: 12 }} icon={<PlusOutlined />}>
+            <Button type="primary" style={{ marginTop: 12 }} icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
               Add your first CA
             </Button>
           </div>
@@ -200,6 +202,8 @@ export default function CAHealthDashboard() {
           />
         )}
       </Card>
+
+      <AddAuthorityModal open={addOpen} onClose={() => setAddOpen(false)} />
     </div>
   );
 }

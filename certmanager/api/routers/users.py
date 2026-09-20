@@ -120,6 +120,22 @@ async def create_user(
     }
 
 
+@router.get("/roles")
+async def list_roles(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_superuser),
+):
+    """List all RBAC roles (admin only). Used by the user-creation form."""
+    result = await db.execute(select(Role).order_by(Role.name))
+    roles = result.scalars().all()
+    return {
+        "data": [
+            {"id": role.id, "name": role.name, "description": role.description}
+            for role in roles
+        ]
+    }
+
+
 @router.get("/{user_id}")
 async def get_user(
     user_id: str,

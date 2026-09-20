@@ -1,12 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, Table, Tag, Button, Space, Typography } from 'antd';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '../../api/client';
+import AddAuthorityModal from '../../components/AddAuthorityModal';
 
 const { Title } = Typography;
 
 export default function AuthoritiesList() {
+  const [addOpen, setAddOpen] = useState(false);
+
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['authorities'],
     queryFn: async () => {
@@ -57,7 +60,7 @@ export default function AuthoritiesList() {
         <Title level={3} style={{ margin: 0 }}>Certificate Authorities</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>Refresh</Button>
-          <Button type="primary" icon={<PlusOutlined />}>Add Authority</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>Add Authority</Button>
         </Space>
       </div>
 
@@ -70,6 +73,8 @@ export default function AuthoritiesList() {
           pagination={false}
         />
       </Card>
+
+      <AddAuthorityModal open={addOpen} onClose={() => setAddOpen(false)} />
     </div>
   );
 }

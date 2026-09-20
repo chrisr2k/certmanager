@@ -1,19 +1,38 @@
 import React, { useState } from 'react';
-import { Table, Input, Select, Tag, Space, Button, Typography, Card } from 'antd';
+import { Table, Input, Select, Tag, Space, Button, Typography, Card, Modal, Form, DatePicker, message } from 'antd';
 import { PlusOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import apiClient from '../../api/client';
+import dayjs from 'dayjs';
+import apiClient, { getEnveloped } from '../../api/client';
 
 const { Title } = Typography;
 
+const CERT_TYPES = [
+  { value: 'server', label: 'Server' },
+  { value: 'client', label: 'Client' },
+  { value: 'ca', label: 'CA' },
+  { value: 'code_signing', label: 'Code Signing' },
+];
+
+const KEY_ALGORITHMS = [
+  { value: 'RSA-2048', label: 'RSA-2048' },
+  { value: 'RSA-4096', label: 'RSA-4096' },
+  { value: 'ECDSA-P256', label: 'ECDSA-P256' },
+  { value: 'ECDSA-P384', label: 'ECDSA-P384' },
+  { value: 'unknown', label: 'Unknown' },
+];
+
 export default function CertificateInventory() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [typeFilter, setTypeFilter] = useState<string | undefined>();
   const [expiringFilter, setExpiringFilter] = useState<number | undefined>();
+  const [addOpen, setAddOpen] = useState(false);
+  const [addForm] = Form.useForm();
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['certificates', page, search, statusFilter, typeFilter, expiringFilter],
@@ -32,6 +51,41 @@ export default function CertificateInventory() {
       return data;
     },
   });
+
+  const { data: datacenters } = useQuery({
+    queryKey: ['datacenters-list'],
+    queryFn: () => getEnveloped('/datacenters'),
+    enabled: addOpen,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (values: any) => apiClient.post('/certificates', values),
+    onSuccess: () => {
+      message.success('Certificate registered');
+      setAddOpen(false);
+      addForm.resetFields();
+      queryClient.invalidateQueries({ queryKey: ['certificates'] });
+    },
+  });
+
+  const handleAddFinish = (values: any) => {
+    const notBefore = values.validity[0];
+    const notAfter = values.validity[1];
+    createMutation.mutate({
+      common_name: values.common_name || undefined,
+      subject: values.subject || undefined,
+      issuer: values.issuer || undefined,
+      serial_number: values.serial_number || undefined,
+      cert_type: values.cert_type || undefined,
+      key_algorithm: values.key_algorithm || undefined,
+      sans: values.sans && values.sans.length ? values.sans : undefined,
+      owner: values.owner || undefined,
+      datacenter_id: values.datacenter_id || undefined,
+      not_before: notBefore.toISOString(),
+      not_after: notAfter.toISOString(),
+      validity_days: Math.max(0, Math.round(notAfter.diff(notBefore, 'day'))),
+    });
+  };
 
   const columns = [
     {
@@ -99,7 +153,7 @@ export default function CertificateInventory() {
         <Title level={3} style={{ margin: 0 }}>Certificate Inventory</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>Refresh</Button>
-          <Button type="primary" icon={<PlusOutlined />}>Add Certificate</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>Add Certificate</Button>
         </Space>
       </div>
 
@@ -171,6 +225,63 @@ export default function CertificateInventory() {
           })}
         />
       </Card>
+
+      <Modal
+        title="Add Certificate"
+        open={addOpen}
+        onOk={() => addForm.submit()}
+        confirmLoading={createMutation.isPending}
+        onCancel={() => setAddOpen(false)}
+        okText="Register"
+      >
+        <Form form={addForm} layout="vertical" onFinish={handleAddFinish}>
+          <Form.Item name="common_name" label="Common Name">
+            <Input placeholder="e.g. mail.example.com" autoFocus />
+          </Form.Item>
+          <Form.Item name="subject" label="Subject">
+            <Input placeholder="e.g. CN=mail.example.com,O=Acme" />
+          </Form.Item>
+          <Form.Item name="issuer" label="Issuer">
+            <Input placeholder="e.g. CN=Internal CA,DC=corp" />
+          </Form.Item>
+          <Form.Item name="serial_number" label="Serial Number">
+            <Input placeholder="Hex serial" />
+          </Form.Item>
+          <Form.Item
+            name="validity"
+            label="Validity"
+            rules={[{ required: true, message: 'Validity range is required' }]}
+          >
+            <DatePicker.RangePicker style={{ width: '100%' }} />
+          </Form.Item>
+          <Space size="large">
+            <Form.Item name="cert_type" label="Type" style={{ minWidth: 160 }}>
+              <Select allowClear placeholder="server" options={CERT_TYPES} />
+            </Form.Item>
+            <Form.Item name="key_algorithm" label="Key Algorithm" style={{ minWidth: 160 }}>
+              <Select allowClear placeholder="unknown" options={KEY_ALGORITHMS} />
+            </Form.Item>
+          </Space>
+          <Form.Item name="sans" label="Subject Alternative Names">
+            <Select mode="tags" placeholder="Add SANs, press Enter after each" open={false} suffixIcon={null} />
+          </Form.Item>
+          <Form.Item name="datacenter_id" label="Datacenter">
+            <Select
+              allowClear
+              placeholder="Optional"
+              loading={!datacenters}
+              options={(
+                Array.isArray(datacenters)
+                  ? datacenters
+                  : datacenters?.datacenters || datacenters?.data || []
+              ).map((dc: any) => ({ value: dc.id, label: `${dc.name} (${dc.code})` }))}
+            />
+          </Form.Item>
+          <Form.Item name="owner" label="Owner">
+            <Input placeholder="Team or contact (optional)" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }
