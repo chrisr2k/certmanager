@@ -25,6 +25,7 @@ import structlog
 # Load scanners based on agent type
 from certmanager.agent.scanners.adcs_scanner import ADCSLocalScanner
 from certmanager.agent.scanners.base import ScannerPlugin
+from certmanager.agent.scanners.openssl_ca import OpenSSLCAscanner
 from certmanager.agent.scanners.tls_scanner import TLSScanner
 
 logger = structlog.get_logger()
@@ -151,6 +152,14 @@ class CertManagerAgent:
                     ports=self.settings.tls_ports,
                     timeout=self.settings.tls_timeout,
                     max_hosts_per_cidr=self.settings.tls_max_hosts_per_cidr,
+                )
+            )
+
+        if agent_type in ("openssl_ca", "generic"):
+            self._scanners.append(
+                OpenSSLCAscanner(
+                    ca_dir=self.settings.openssl_ca_dir,
+                    ca_name=self.settings.openssl_ca_name,
                 )
             )
 
@@ -288,6 +297,11 @@ class CertManagerAgent:
         elif job_type in ("tls_scan",):
             scanner = next(
                 (s for s in self._scanners if s.name == "tls_scanner"),
+                None,
+            )
+        elif job_type in ("openssl_ca_scan",):
+            scanner = next(
+                (s for s in self._scanners if s.name == "openssl_ca"),
                 None,
             )
         else:

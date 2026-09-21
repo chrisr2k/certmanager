@@ -25,7 +25,8 @@ systemd**, or **Docker container**.
 - **Mode A (polling)** is the default: the agent only makes outbound HTTPS
   connections to the central API — no inbound ports, no VPN needed.
 - **Agent types**: `tls_scanner` (CIDR + port TLS sweeps), `adcs` (PowerShell
-  enumeration of a Microsoft CA), `generic` (both).
+  enumeration of a Microsoft CA), `openssl_ca` (parses a plain `openssl ca`
+  PKI directory), `generic` (all of them).
 - **Air-gap mode**: for fully isolated networks, jobs can be delivered and
   results exported as HMAC-signed JSON files (see below).
 
@@ -133,13 +134,15 @@ docker run -d --name certmanager-agent \
 | `api_url` | Central API base URL, e.g. `https://api.example.com` |
 | `psk` | Deployment pre-shared key (see §1) |
 | `agent_name` | Unique per agent — also the identity shown in the UI |
-| `agent_type` | `tls_scanner` \| `adcs` \| `generic` |
+| `agent_type` | `tls_scanner` \| `adcs` \| `openssl_ca` \| `generic` |
 | `datacenter_code` | Code of the datacenter created in §1 |
 | `poll_interval` | Seconds between job polls (default 30) |
 | `tls_cidr_ranges` / `tls_ports` | Default TLS sweep targets (CIDR list / port list) |
 | `tls_timeout` / `tls_max_hosts_per_cidr` | Handshake timeout (s); per-CIDR host cap (default 256 — raises a log warning when truncating) |
 | `listener_enabled` / `listener_port` | Connector listener for AD CS agents (see §7) |
 | `adcs_ca_server` / `adcs_ca_name` | AD CS targets (Windows CA) |
+| `openssl_ca_dir` | Path to an `openssl ca` directory (contains `index.txt`, `newcerts/`) — agent must have read access |
+| `openssl_ca_name` | Display name for the OpenSSL CA |
 
 ## 6. Scan targets and triggering
 
@@ -166,6 +169,25 @@ ciphers (embedded printers/IoT often negotiate nothing newer), never
 verifies certificates (metadata harvesting), and caps concurrency and
 CIDR sizes. It only performs TLS handshakes on the configured ports —
 no port sweeping beyond the list, no exploitation.
+
+## 6b. OpenSSL CA agents
+
+Run the agent on the CA host (or anywhere with read access to the CA
+directory) with `agent_type: openssl_ca` and `openssl_ca_dir` pointing at
+the directory containing `index.txt` and `newcerts/`. The scanner parses
+the issued-certificate database and reports every certificate — including
+revoked and unused ones the TLS scanner can never see.
+
+Trigger a scan centrally (same generic job path as other scan types):
+
+```bash
+curl -X POST https://api.example.com/api/v1/scans \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"job_type": "openssl_ca_scan", "scope_config": {"agent_id": "<agent_id>"}}'
+```
+
+Status mapping comes from the index: `V` → active, `R` → revoked,
+`E` → expired (a `V` cert past its expiry date is reported as expired).
 
 ## 7. AD CS agents and the connector listener
 

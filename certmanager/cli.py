@@ -325,7 +325,9 @@ app.add_typer(agent_app, name="agent")
 def agent_init(
     url: str = typer.Option(..., help="Central CertManager API URL", prompt=True),
     psk: str = typer.Option(..., help="Pre-shared key for agent registration", prompt=True),
-    agent_type: str = typer.Option("adcs", help="Agent type: adcs, tls_scanner, generic"),
+    agent_type: str = typer.Option(
+        "adcs", help="Agent type: adcs, tls_scanner, openssl_ca, generic"
+    ),
     datacenter_code: str = typer.Option("", help="Datacenter code this agent belongs to"),
     name: str = typer.Option("", help="Agent name (defaults to hostname)"),
     config_path: str = typer.Option("agent_config.json", help="Config file path"),

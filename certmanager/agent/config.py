@@ -71,6 +71,12 @@ class AgentSettings(BaseSettings):
     adcs_ca_name: str = Field(default="", description="Certificate Authority name")
     adcs_use_winrm: bool = Field(default=False, description="Use WinRM instead of local subprocess")
 
+    # OpenSSL CA scanner settings (if agent_type=openssl_ca)
+    openssl_ca_dir: str = Field(
+        default="", description="Path to the `openssl ca` directory (index.txt, newcerts/)"
+    )
+    openssl_ca_name: str = Field(default="", description="Display name for the OpenSSL CA")
+
     # Logging
     log_level: str = Field(default="INFO")
     log_format: str = Field(default="json")  # json | console
@@ -111,6 +117,8 @@ def load_agent_config(config_path: str | None = None) -> AgentSettings:
             "tls_max_hosts_per_cidr": "tls_max_hosts_per_cidr",
             "adcs_ca_server": "adcs_ca_server",
             "adcs_ca_name": "adcs_ca_name",
+            "openssl_ca_dir": "openssl_ca_dir",
+            "openssl_ca_name": "openssl_ca_name",
             "listener_enabled": "listener_enabled",
             "listener_host": "listener_host",
             "listener_port": "listener_port",
@@ -163,6 +171,8 @@ def save_agent_config(settings: AgentSettings, config_path: str | None = None) -
         "tls_max_hosts_per_cidr": settings.tls_max_hosts_per_cidr,
         "adcs_ca_server": settings.adcs_ca_server,
         "adcs_ca_name": settings.adcs_ca_name,
+        "openssl_ca_dir": settings.openssl_ca_dir,
+        "openssl_ca_name": settings.openssl_ca_name,
         "listener_enabled": settings.listener_enabled,
         "listener_host": settings.listener_host,
         "listener_port": settings.listener_port,
