@@ -86,21 +86,28 @@ For a TLS-only agent, set in the config:
 
 ## 3. Install: Linux (systemd)
 
-The full walkthrough lives in the comments of
-[`certmanager-agent.service`](certmanager-agent.service). In short:
+One command does the whole thing — it creates the `certmgr` service user,
+writes the systemd unit, hardens the config permissions, and enables +
+starts the service. Run it as root:
 
 ```bash
-sudo useradd --system --home /opt/certmanager-agent --shell /usr/sbin/nologin certmgr
 sudo python3 -m venv /opt/certmanager-agent/.venv
 sudo /opt/certmanager-agent/.venv/bin/pip install certmanager
 sudo /opt/certmanager-agent/.venv/bin/certmanager agent init \
     --url https://api.example.com --psk <psk> --config-path /opt/certmanager-agent/agent_config.json
-sudo mkdir -p /opt/certmanager-agent/agent_data
-sudo chown -R certmgr:certmgr /opt/certmanager-agent
-sudo chmod 600 /opt/certmanager-agent/agent_config.json
-sudo cp certmanager-agent.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now certmanager-agent
+sudo /opt/certmanager-agent/.venv/bin/certmanager agent install-service \
+    --config-path /opt/certmanager-agent/agent_config.json
 ```
+
+That's it — `systemctl status certmanager-agent` shows the service, logs via
+`journalctl -u certmanager-agent -f`. Re-running `install-service` after
+config changes is safe (it restarts the unit).
+
+Manual alternative: the unit template also ships as
+[`certmanager-agent.service`](certmanager-agent.service) with a full
+walkthrough in its comments; copy it to `/etc/systemd/system/`, adjust the
+venv path, then `systemctl daemon-reload && systemctl enable --now
+certmanager-agent`.
 
 ## 4. Install: Docker
 

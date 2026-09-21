@@ -364,7 +364,8 @@ def agent_init(
         console.print("  [bold]Or run directly:[/] certmanager agent run")
     elif system == "Linux":
         console.print(
-            "  [bold]systemd:[/] sudo cp deploy/agent/certmanager-agent.service /etc/systemd/system/"
+            "  [bold]Install as a service:[/] sudo certmanager agent install-service"
+            f" --config-path {config_path}"
         )
         console.print(
             "  [bold]Docker:[/] docker run -v ./agent_config.json:/app/agent_config.json certmanager-agent"
@@ -408,6 +409,35 @@ def agent_run(
 
     exit_code = asyncio.run(run_agent(settings))
     raise typer.Exit(exit_code)
+
+
+@agent_app.command("install-service")
+def agent_install_service(
+    config_path: str = typer.Option(
+        "agent_config.json", "--config-path", help="Path to agent_config.json"
+    ),
+    user: str = typer.Option("certmgr", "--user", help="Service user to create/use"),
+    no_start: bool = typer.Option(False, "--no-start", help="Install unit but don't start it"),
+):
+    """Install the agent as a systemd service (Linux, run as root)."""
+    from certmanager.agent.install import SERVICE_NAME, install_systemd_service
+
+    try:
+        unit_path = install_systemd_service(
+            config_path=config_path, user=user, start=not no_start
+        )
+    except (RuntimeError, FileNotFoundError) as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from e
+
+    console.print(f"[green]Service installed:[/] {unit_path}")
+    console.print(f"[green]Service name:[/]    {SERVICE_NAME}")
+    console.print()
+    console.print("  Logs:     journalctl -u certmanager-agent -f")
+    console.print("  Stop:     systemctl stop certmanager-agent")
+    console.print("  Remove:   systemctl disable --now certmanager-agent")
+    console.print()
+    console.print("[bold yellow]Next:[/] approve this agent in the UI (Admin → Agents).")
 
 
 @agent_app.command("export")
