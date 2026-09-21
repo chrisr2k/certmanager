@@ -48,10 +48,35 @@ export default function ChannelsPage() {
   });
 
   const handleSubmit = (values: any) => {
+    const config: Record<string, any> = {};
+    switch (values.channel_type) {
+      case 'email':
+        config.to = values.to;
+        for (const k of ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'from_address']) {
+          if (values[k] !== undefined && values[k] !== null && values[k] !== '') config[k] = values[k];
+        }
+        break;
+      case 'slack':
+        config.webhook_url = values.webhook_url;
+        if (values.channel) config.channel = values.channel;
+        break;
+      case 'teams':
+        config.webhook_url = values.webhook_url;
+        break;
+      case 'webhook':
+        config.url = values.url;
+        config.method = values.method || 'POST';
+        const headers: Record<string, string> = {};
+        (values.headers || []).forEach((h: any) => {
+          if (h?.key && h?.value !== undefined && h?.value !== '') headers[h.key] = h.value;
+        });
+        if (Object.keys(headers).length > 0) config.headers = headers;
+        break;
+    }
     createMutation.mutate({
       name: values.name,
       channel_type: values.channel_type,
-      config: values.config ? JSON.parse(values.config) : {},
+      config,
     });
   };
 
@@ -156,31 +181,91 @@ export default function ChannelsPage() {
           <Form.Item noStyle shouldUpdate={(prev, cur) => prev.channel_type !== cur.channel_type}>
             {({ getFieldValue }) => {
               const type = getFieldValue('channel_type');
-              let configPlaceholder = '{}';
               if (type === 'email') {
-                configPlaceholder = '{"to": ["ops@example.com"], "smtp_host": "smtp.example.com", "smtp_port": 587}';
-              } else if (type === 'slack' || type === 'teams') {
-                configPlaceholder = '{"webhook_url": "https://hooks.example.com/..."}';
-              } else if (type === 'webhook') {
-                configPlaceholder = '{"url": "https://api.example.com/alerts", "method": "POST", "headers": {"Authorization": "Bearer ..."}}';
+                return (
+                  <>
+                    <Form.Item name="to" label="Recipients"
+                      rules={[{ required: true, message: 'At least one recipient is required' }]}>
+                      <Select mode="tags" placeholder="Type an email and press Enter" open={false} suffixIcon={null} />
+                    </Form.Item>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      SMTP settings are optional — leave blank to use the server defaults.
+                    </Text>
+                    <Form.Item name="smtp_host" label="SMTP Host">
+                      <Input placeholder="server default" />
+                    </Form.Item>
+                    <Form.Item name="smtp_port" label="SMTP Port">
+                      <InputNumber style={{ width: '100%' }} placeholder="server default" />
+                    </Form.Item>
+                    <Form.Item name="smtp_user" label="SMTP User">
+                      <Input placeholder="server default" />
+                    </Form.Item>
+                    <Form.Item name="smtp_password" label="SMTP Password">
+                      <Input.Password placeholder="server default" />
+                    </Form.Item>
+                    <Form.Item name="from_address" label="From Address">
+                      <Input placeholder="server default" />
+                    </Form.Item>
+                  </>
+                );
               }
-              return (
-                <Form.Item
-                  name="config"
-                  label="Configuration (JSON)"
-                  rules={[
-                    { required: true, message: 'Configuration is required' },
-                    { validator: (_, value) => {
-                      if (!value) return Promise.resolve();
-                      try { JSON.parse(value); return Promise.resolve(); }
-                      catch { return Promise.reject('Invalid JSON'); }
-                    }},
-                  ]}
-                  initialValue={configPlaceholder}
-                >
-                  <Input.TextArea rows={6} placeholder={configPlaceholder} style={{ fontFamily: 'monospace', fontSize: 12 }} />
-                </Form.Item>
-              );
+              if (type === 'slack') {
+                return (
+                  <>
+                    <Form.Item name="webhook_url" label="Webhook URL"
+                      rules={[{ required: true, message: 'Webhook URL is required' }]}>
+                      <Input placeholder="https://hooks.slack.com/services/..." />
+                    </Form.Item>
+                    <Form.Item name="channel" label="Channel (optional)">
+                      <Input placeholder="#cert-alerts — overrides the webhook default" />
+                    </Form.Item>
+                  </>
+                );
+              }
+              if (type === 'teams') {
+                return (
+                  <Form.Item name="webhook_url" label="Webhook URL"
+                    rules={[{ required: true, message: 'Webhook URL is required' }]}>
+                    <Input placeholder="https://outlook.office.com/webhook/..." />
+                  </Form.Item>
+                );
+              }
+              if (type === 'webhook') {
+                return (
+                  <>
+                    <Form.Item name="url" label="URL"
+                      rules={[{ required: true, message: 'URL is required' }]}>
+                      <Input placeholder="https://api.example.com/alerts" />
+                    </Form.Item>
+                    <Form.Item name="method" label="Method" initialValue="POST">
+                      <Select options={['POST', 'PUT', 'GET'].map((m) => ({ value: m, label: m }))} />
+                    </Form.Item>
+                    <Form.Item label="Headers (optional)">
+                      <Form.List name="headers" initialValue={[{}]}>
+                        {(fields, { add, remove }) => (
+                          <>
+                            {fields.map((field) => (
+                              <Space key={field.key} align="baseline" style={{ display: 'flex', marginBottom: 8 }}>
+                                <Form.Item name={[field.name, 'key']} style={{ marginBottom: 0 }}>
+                                  <Input placeholder="Header (e.g. Authorization)" style={{ width: 200 }} />
+                                </Form.Item>
+                                <Form.Item name={[field.name, 'value']} style={{ marginBottom: 0 }}>
+                                  <Input placeholder="Value" style={{ width: 200 }} />
+                                </Form.Item>
+                                <Button type="link" size="small" onClick={() => remove(field.name)}>✕</Button>
+                              </Space>
+                            ))}
+                            <Button type="dashed" size="small" onClick={() => add()} block>
+                              + Add header
+                            </Button>
+                          </>
+                        )}
+                      </Form.List>
+                    </Form.Item>
+                  </>
+                );
+              }
+              return null;
             }}
           </Form.Item>
         </Form>
