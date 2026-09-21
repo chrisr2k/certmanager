@@ -83,3 +83,35 @@ async def test_full_discovery_still_worker_dispatched(
     result = await seeded_db.execute(select(ScanJob).where(ScanJob.id == job_id))
     job = result.scalar_one()
     assert job.job_type == "full_discovery"
+
+
+async def test_agent_scan_now_without_body_uses_stored_targets(
+    client: AsyncClient, admin_headers: dict, seeded_db: AsyncSession
+):
+    """Regression: the UI's Scan Now posts no body — the endpoint must
+    fall back to the agent's stored scan targets (was a 422)."""
+    seeded_db.add(
+        Agent(
+            id="33333333-3333-4333-8333-333333333333",
+            name="scan-now-test",
+            agent_type="tls_scanner",
+            auth_token_hash="test-hash",
+            is_approved=True,
+            config={"tls_cidr_ranges": ["10.9.0.0/24"], "tls_ports": [443]},
+        )
+    )
+    await seeded_db.commit()
+
+    resp = await client.post(
+        "/api/v1/agents/33333333-3333-4333-8333-333333333333/scan-targets/scan",
+        headers=admin_headers,
+        # Deliberately no JSON body — mirrors the frontend Scan Now button
+    )
+    assert resp.status_code == 201, resp.text
+    job_id = resp.json()["data"]["scan_job_id"]
+
+    result = await seeded_db.execute(select(ScanJob).where(ScanJob.id == job_id))
+    job = result.scalar_one()
+    assert job.scope_config["cidr_ranges"] == ["10.9.0.0/24"]
+    assert job.scope_config["ports"] == [443]
+    assert job.scope_config["agent_id"] == "33333333-3333-4333-8333-333333333333"

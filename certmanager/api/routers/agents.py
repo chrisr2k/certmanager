@@ -512,18 +512,22 @@ async def update_scan_targets(
 @router.post("/{agent_id}/scan-targets/scan", status_code=201)
 async def trigger_tls_scan(
     agent_id: str,
-    body: TLSScanRequest,
+    body: TLSScanRequest | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Trigger a TLS scan on a specific agent."""
+    """Trigger a TLS scan on a specific agent.
+
+    With no body (or omitted ranges/ports), the agent's stored scan
+    targets are used — this is how the UI's Scan Now button behaves.
+    """
     from certmanager.services.agent_service import AgentService
 
     svc = AgentService(db)
     job_id = await svc.create_tls_scan_job(
         agent_id=agent_id,
-        cidr_ranges=body.cidr_ranges,
-        ports=body.ports,
+        cidr_ranges=body.cidr_ranges if body else None,
+        ports=body.ports if body else None,
         triggered_by="manual",
         triggered_by_user=current_user.id,
     )

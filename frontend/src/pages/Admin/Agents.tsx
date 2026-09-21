@@ -47,7 +47,8 @@ function TLSScanTargets({ agentId, agentType }: { agentId: string; agentType: st
 
   const scanMutation = useMutation({
     mutationFn: async () => {
-      await apiClient.post(`/agents/${agentId}/scan-targets/scan`);
+      // Empty body: the backend falls back to the stored scan targets
+      await apiClient.post(`/agents/${agentId}/scan-targets/scan`, {});
     },
     onSuccess: (resp: any) => {
       const jobId = resp?.data?.data?.scan_job_id;
