@@ -46,6 +46,7 @@ class AlertRuleUpdate(BaseModel):
     severity: str | None = None
     cooldown_minutes: int | None = None
     scope_filter: dict | None = None
+    channel_ids: list[str] | None = None
 
 
 class ChannelCreate(BaseModel):
@@ -76,6 +77,18 @@ async def list_alert_rules(
     result = await db.execute(query.order_by(AlertRule.created_at.desc()))
     rules = result.scalars().all()
 
+    # Attached notification channels, grouped by rule
+    link_result = await db.execute(
+        select(AlertRuleChannel).where(
+            AlertRuleChannel.alert_rule_id.in_([r.id for r in rules])
+        )
+    )
+    channel_ids_by_rule: dict[str, list[str]] = {}
+    for link in link_result.scalars().all():
+        nc_id = (link.channel_config or {}).get("notification_channel_id")
+        if nc_id:
+            channel_ids_by_rule.setdefault(link.alert_rule_id, []).append(nc_id)
+
     return {
         "data": [
             {
@@ -88,6 +101,7 @@ async def list_alert_rules(
                 "scope_filter": r.scope_filter,
                 "severity": r.severity,
                 "cooldown_minutes": r.cooldown_minutes,
+                "channel_ids": channel_ids_by_rule.get(r.id, []),
                 "created_at": r.created_at.isoformat(),
             }
             for r in rules
@@ -157,6 +171,22 @@ async def update_alert_rule(
         value = getattr(body, field)
         if value is not None:
             setattr(rule, field, value)
+
+    # Replace the channel associations when channel_ids is provided
+    if body.channel_ids is not None:
+        existing = await db.execute(
+            select(AlertRuleChannel).where(AlertRuleChannel.alert_rule_id == rule.id)
+        )
+        for link in existing.scalars().all():
+            await db.delete(link)
+        for ch_id in body.channel_ids:
+            db.add(
+                AlertRuleChannel(
+                    alert_rule_id=rule.id,
+                    channel_type="notification_channel",
+                    channel_config={"notification_channel_id": ch_id},
+                )
+            )
 
     await db.flush()
     return {"data": {"id": rule.id, "updated": True}}

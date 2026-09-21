@@ -26,19 +26,18 @@ export default function AlertsRules() {
     },
   });
 
+  const { data: channels } = useQuery({
+    queryKey: ['notification-channels'],
+    queryFn: async () => {
+      const { data } = await apiClient.get('/alerts/channels');
+      return data.data || [];
+    },
+    enabled: modalOpen,
+  });
+
   const createMutation = useMutation({
-    // The backend endpoint reads these fields as query params (plain scalar
-    // FastAPI arguments), so send both query params and a JSON body.
     mutationFn: async (values: any) => {
-      const params = {
-        name: values.name,
-        description: values.description,
-        condition_type: values.condition_type,
-        condition_config: JSON.stringify(values.condition_config),
-        severity: values.severity,
-        cooldown_minutes: values.cooldown_minutes,
-      };
-      await apiClient.post('/alerts/rules', values, { params });
+      await apiClient.post('/alerts/rules', values);
     },
     onSuccess: () => {
       message.success('Alert rule created');
@@ -50,13 +49,7 @@ export default function AlertsRules() {
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, values }: { id: string; values: any }) => {
-      const params = {
-        name: values.name,
-        is_enabled: values.is_enabled,
-        condition_config: JSON.stringify(values.condition_config),
-        severity: values.severity,
-      };
-      await apiClient.patch(`/alerts/rules/${id}`, values, { params });
+      await apiClient.patch(`/alerts/rules/${id}`, values);
     },
     onSuccess: () => {
       message.success('Alert rule updated');
@@ -68,7 +61,7 @@ export default function AlertsRules() {
 
   const toggleMutation = useMutation({
     mutationFn: async ({ id, is_enabled }: { id: string; is_enabled: boolean }) => {
-      await apiClient.patch(`/alerts/rules/${id}`, { is_enabled }, { params: { is_enabled } });
+      await apiClient.patch(`/alerts/rules/${id}`, { is_enabled });
     },
     onSuccess: () => {
       message.success('Rule updated');
@@ -107,9 +100,11 @@ export default function AlertsRules() {
       severity: rule.severity,
       cooldown_minutes: rule.cooldown_minutes,
       is_enabled: rule.is_enabled,
+      channel_ids: rule.channel_ids || [],
       days: rule.condition_config?.days || 30,
       issuer_pattern: rule.condition_config?.issuer_pattern || '',
       status: rule.condition_config?.status || 'expired',
+      within_hours: rule.condition_config?.within_hours || 24,
       health_status: rule.condition_config?.health_status || 'unhealthy',
     });
     setModalOpen(true);
@@ -126,7 +121,10 @@ export default function AlertsRules() {
         condition_config = { issuer_pattern: values.issuer_pattern || '' };
         break;
       case 'status_change':
-        condition_config = { status: values.status || 'expired', within_hours: 24 };
+        condition_config = {
+          status: values.status || 'expired',
+          within_hours: values.within_hours || 24,
+        };
         break;
       case 'ca_health':
         condition_config = { health_status: values.health_status || 'unhealthy' };
@@ -141,6 +139,7 @@ export default function AlertsRules() {
       severity: values.severity,
       cooldown_minutes: values.cooldown_minutes,
       is_enabled: values.is_enabled,
+      channel_ids: values.channel_ids || [],
     };
 
     if (editRule) {
@@ -304,12 +303,17 @@ export default function AlertsRules() {
                     </Form.Item>
                   )}
                   {condType === 'status_change' && (
-                    <Form.Item name="status" label="Target Status">
-                      <Select options={[
-                        { value: 'expired', label: 'Expired' },
-                        { value: 'revoked', label: 'Revoked' },
-                      ]} />
-                    </Form.Item>
+                    <>
+                      <Form.Item name="status" label="Target Status">
+                        <Select options={[
+                          { value: 'expired', label: 'Expired' },
+                          { value: 'revoked', label: 'Revoked' },
+                        ]} />
+                      </Form.Item>
+                      <Form.Item name="within_hours" label="Within (hours)" initialValue={24}>
+                        <InputNumber min={1} max={168} style={{ width: '100%' }} addonAfter="hours" />
+                      </Form.Item>
+                    </>
                   )}
                   {condType === 'ca_health' && (
                     <Form.Item name="health_status" label="Health Status">
@@ -339,6 +343,22 @@ export default function AlertsRules() {
               <Switch />
             </Form.Item>
           </Space>
+
+          <Form.Item
+            name="channel_ids"
+            label="Notify via channels"
+            tooltip="Which notification channels this rule fires through — leave empty for events only"
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="Select channels (create them in Channels first)"
+              options={(channels || []).map((c: any) => ({
+                value: c.id,
+                label: `${c.name} (${c.channel_type})`,
+              }))}
+            />
+          </Form.Item>
         </Form>
       </Modal>
     </div>
