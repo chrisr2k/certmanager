@@ -13,6 +13,10 @@ from certmanager.core.models import ScanJob, User
 
 router = APIRouter()
 
+# Job types executed by a datacenter AGENT (polled via /agents/{id}/jobs),
+# as opposed to CA-connector scans that run in the Celery worker.
+AGENT_JOB_TYPES = {"tls_scan", "openssl_ca_scan"}
+
 
 class ScanTriggerRequest(BaseModel):
     """Body for triggering a scan job."""
@@ -98,11 +102,14 @@ async def trigger_scan(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Trigger a new discovery scan job. Dispatches to Celery scanner worker.
+    """Trigger a new discovery scan job.
 
-    For TLS scans, specify agent_id and optionally cidr_ranges/ports.
-    The agent will execute the scan on its next poll cycle.
+    CA-connector scans dispatch to the Celery scanner worker. Agent-executed
+    scans (tls_scan, openssl_ca_scan) require an agent_id and are left for
+    the agent to pick up on its next poll cycle.
     """
+    is_agent_job = body.job_type in AGENT_JOB_TYPES
+
     job = ScanJob(
         job_type=body.job_type,
         status="pending",
@@ -111,37 +118,34 @@ async def trigger_scan(
         scope_config=body.scope_config or {},
     )
 
-    # For TLS scans: populate scope from parameters
-    if body.job_type == "tls_scan":
+    if is_agent_job:
         if not body.agent_id:
             from certmanager.core.exceptions import ValidationError
 
-            raise ValidationError("agent_id is required for tls_scan jobs")
+            raise ValidationError(f"agent_id is required for {body.job_type} jobs")
 
-        from certmanager.services.agent_service import AgentService
+        # The agent only fetches jobs whose scope names it (see
+        # GET /agents/{id}/jobs), so agent identity must be in the scope.
+        scope = dict(body.scope_config or {})
+        scope["agent_id"] = body.agent_id
 
-        agent_svc = AgentService(db)
-        targets = await agent_svc.get_scan_targets(body.agent_id)
+        if body.job_type == "tls_scan":
+            from certmanager.services.agent_service import AgentService
 
-        job.scope_config = {
-            "agent_id": body.agent_id,
-            "cidr_ranges": body.cidr_ranges or targets["cidr_ranges"],
-            "ports": body.ports or targets["ports"],
-        }
+            agent_svc = AgentService(db)
+            targets = await agent_svc.get_scan_targets(body.agent_id)
+            scope["cidr_ranges"] = body.cidr_ranges or targets["cidr_ranges"]
+            scope["ports"] = body.ports or targets["ports"]
 
-        # For TLS scans, the agent polls for its own jobs —
-        # no Celery dispatch needed (the agent executes it)
+        job.scope_config = scope
 
     db.add(job)
     await db.flush()
     await db.refresh(job)
 
-    # Dispatch to background worker (for non-TLS scans)
-    if body.job_type != "tls_scan":
+    if not is_agent_job:
+        # CA-connector scans run in the Celery worker
         _dispatch_scan(str(job.id))
-    else:
-        # For TLS scans, the agent fetches its own jobs via polling
-        pass
 
     return {
         "data": {
@@ -149,8 +153,8 @@ async def trigger_scan(
             "job_type": job.job_type,
             "status": "pending",
             "message": (
-                "TLS scan queued. The agent will pick this up on its next poll cycle."
-                if body.job_type == "tls_scan"
+                "Scan queued. The agent will pick this up on its next poll cycle."
+                if is_agent_job
                 else "Scan job dispatched to worker. Monitor status at GET /scans/{id}."
             ),
         }
