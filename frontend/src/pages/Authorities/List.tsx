@@ -7,6 +7,20 @@ import AddAuthorityModal from '../../components/AddAuthorityModal';
 
 const { Title, Text } = Typography;
 
+// Triggers a browser save-as for a string, without ever putting the
+// content in a navigable URL (which would carry no auth header).
+function saveTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'application/x-pem-file' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // Polls a scan job until it reaches a terminal state, surfacing a
 // "Download Key" action once an ACME job's key bundle is ready.
 function AcmeJobStatus({ jobId, onDone }: { jobId: string; onDone: () => void }) {
@@ -17,6 +31,28 @@ function AcmeJobStatus({ jobId, onDone }: { jobId: string; onDone: () => void })
       const status = query.state.data?.status;
       return status === 'completed' || status === 'failed' ? false : 3000;
     },
+  });
+
+  const downloadMutation = useMutation({
+    mutationFn: async (downloadUrl: string) => {
+      // Must go through apiClient (not a raw <a href>) so the request
+      // carries the Authorization header — this endpoint requires it.
+      const { data } = await apiClient.get(downloadUrl.replace(/^\/api\/v1/, ''));
+      return data.data as {
+        private_key_pem: string;
+        certificate_pem: string;
+        chain_pem: string;
+        fullchain_pem: string;
+      };
+    },
+    onSuccess: (bundle, downloadUrl) => {
+      const bundleId = downloadUrl.split('/').slice(-2, -1)[0];
+      saveTextFile(`certmanager-${bundleId.slice(0, 8)}.key.pem`, bundle.private_key_pem);
+      saveTextFile(`certmanager-${bundleId.slice(0, 8)}.fullchain.pem`, bundle.fullchain_pem);
+      message.success('Private key and fullchain downloaded');
+      onDone();
+    },
+    onError: () => message.error('Download failed — the key bundle may have expired (48h TTL)'),
   });
 
   if (!job) return <Text type="secondary">Checking status…</Text>;
@@ -32,9 +68,8 @@ function AcmeJobStatus({ jobId, onDone }: { jobId: string; onDone: () => void })
           size="small"
           type="primary"
           icon={<DownloadOutlined />}
-          href={job.download_url}
-          target="_blank"
-          onClick={onDone}
+          loading={downloadMutation.isPending}
+          onClick={() => downloadMutation.mutate(job.download_url)}
         >
           Download Key
         </Button>
