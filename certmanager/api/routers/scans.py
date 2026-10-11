@@ -173,22 +173,36 @@ async def get_scan(
     if not job:
         raise NotFoundError(f"Scan job {scan_id} not found")
 
-    return {
-        "data": {
-            "id": job.id,
-            "job_type": job.job_type,
-            "status": job.status,
-            "scope_config": job.scope_config,
-            "total_checked": job.total_checked,
-            "total_new": job.total_new,
-            "total_updated": job.total_updated,
-            "total_errors": job.total_errors,
-            "error_detail": job.error_detail,
-            "started_at": job.started_at.isoformat() if job.started_at else None,
-            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-            "created_at": job.created_at.isoformat(),
-        }
+    data = {
+        "id": job.id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "scope_config": job.scope_config,
+        "total_checked": job.total_checked,
+        "total_new": job.total_new,
+        "total_updated": job.total_updated,
+        "total_errors": job.total_errors,
+        "error_detail": job.error_detail,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "created_at": job.created_at.isoformat(),
     }
+
+    if job.job_type in ("acme_issue", "acme_renew"):
+        from certmanager.core.models import CertificateKeyBundle
+
+        bundle_result = await db.execute(
+            select(CertificateKeyBundle).where(CertificateKeyBundle.scan_job_id == scan_id)
+        )
+        bundle = bundle_result.scalar_one_or_none()
+        if bundle:
+            data["key_bundle_id"] = bundle.id
+            data["download_url"] = f"/api/v1/authorities/key-bundles/{bundle.id}/download"
+            data["key_bundle_expires_at"] = (
+                bundle.expires_at.isoformat() if bundle.expires_at else None
+            )
+
+    return {"data": data}
 
 
 @router.post("/{scan_id}/cancel")

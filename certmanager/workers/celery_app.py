@@ -31,6 +31,7 @@ app = Celery(
         "certmanager.workers.alert_worker",
         "certmanager.workers.report_worker",
         "certmanager.workers.ct_log_worker",
+        "certmanager.workers.acme_worker",
     ],
 )
 
@@ -85,5 +86,15 @@ app.conf.beat_schedule = {
     "scheduled-tls-scans": {
         "task": "certmanager.workers.scanner_worker.scheduled_tls_scans",
         "schedule": crontab(hour=2, minute=0, day_of_week=0),
+    },
+    # ACME auto-renewal — runs daily at 05:00 UTC
+    "acme-auto-renew": {
+        "task": "certmanager.workers.acme_worker.auto_renew_expiring_acme_certs",
+        "schedule": crontab(hour=5, minute=0),
+    },
+    # Purge expired ACME key bundles — runs daily at 05:30 UTC
+    "acme-purge-key-bundles": {
+        "task": "certmanager.workers.acme_worker.purge_expired_key_bundles",
+        "schedule": crontab(hour=5, minute=30),
     },
 }

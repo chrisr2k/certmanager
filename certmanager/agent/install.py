@@ -113,7 +113,7 @@ def install_systemd_service(
         ["id", "-u", user], capture_output=True
     ).returncode != 0:
         _run([
-            "useradd", "--system", f"--home", str(install_dir),
+            "useradd", "--system", "--home", str(install_dir),
             "--shell", "/usr/sbin/nologin", user,
         ])
 

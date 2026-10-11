@@ -20,7 +20,7 @@ import structlog
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 
-from certmanager.agent.scanners.base import HealthStatus, ScanResult, ScannerPlugin
+from certmanager.agent.scanners.base import HealthStatus, ScannerPlugin, ScanResult
 
 logger = structlog.get_logger()
 

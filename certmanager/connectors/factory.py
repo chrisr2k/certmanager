@@ -41,9 +41,12 @@ def get_connector(
     elif ca_type == "adcs":
         return _create_adcs_connector(config, authority.name, credential_store)
 
+    elif ca_type == "acme":
+        return _create_acme_connector(config, authority.name, credential_store)
+
     else:
         raise ConnectorConfigError(
-            f"Unknown CA type: '{ca_type}'. Supported types: aws_acm, azure_keyvault, adcs"
+            f"Unknown CA type: '{ca_type}'. Supported types: aws_acm, azure_keyvault, adcs, acme"
         )
 
 
@@ -147,6 +150,46 @@ def _create_adcs_connector(
         ca_name=ca_name or "",
         base_url=agent_base_url or "",
         api_token=api_token or "",
+    )
+
+
+def _create_acme_connector(
+    config: dict, name: str, credential_store: CredentialStore | None = None
+) -> CAConnector:
+    """Create an ACME (Let's Encrypt or compatible) connector from config."""
+    from certmanager.connectors.acme import ACMEConnector
+    from certmanager.connectors.dns_providers import CloudflareDNSProvider
+
+    contact_email = config.get("contact_email")
+    domains = config.get("domains") or []
+    dns_token = config.get("dns_provider_api_token")
+    zone_id = config.get("cloudflare_zone_id")
+
+    if not contact_email:
+        raise ConnectorConfigError(f"ACME CA '{name}' is missing required 'contact_email' in config")
+    if not domains:
+        raise ConnectorConfigError(
+            f"ACME CA '{name}' must specify at least one domain in config.domains — "
+            "ACME has no 'list everything' API, so the CA entry must declare what it manages"
+        )
+
+    if credential_store and config.get("credential_ref"):
+        creds = credential_store.get(config["credential_ref"])
+        if creds:
+            dns_token = creds.get("dns_provider_api_token") or dns_token
+
+    if not dns_token:
+        raise ConnectorConfigError(
+            f"ACME CA '{name}' is missing required 'dns_provider_api_token' in config"
+        )
+
+    return ACMEConnector(
+        directory_url=config.get("directory_url") or "",
+        contact_email=contact_email,
+        domains=domains,
+        dns_provider=CloudflareDNSProvider(api_token=dns_token, zone_id=zone_id),
+        account_key_pem=config.get("account_key_pem"),
+        account_url=config.get("account_url"),
     )
 
 

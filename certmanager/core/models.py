@@ -13,7 +13,7 @@ Private keys are NEVER persisted in this database.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
@@ -189,7 +189,7 @@ class CertificateAuthority(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     ca_type: Mapped[str] = mapped_column(
         String(50), nullable=False
-    )  # aws_acm | azure_keyvault | adcs
+    )  # aws_acm | azure_keyvault | adcs | acme
     datacenter_id: Mapped[str | None] = mapped_column(
         UUIDHex, ForeignKey("datacenters.id", ondelete="SET NULL")
     )
@@ -199,6 +199,8 @@ class CertificateAuthority(Base, TimestampMixin):
     # AWS: {"account_id": "...", "regions": ["us-east-1"], "role_arn": "..."}
     # Azure: {"subscription_id": "...", "vault_url": "...", "tenant_id": "..."}
     # ADCS: {"agent_id": "...", "ca_server": "...", "ca_name": "..."}
+    # ACME: {"directory_url": "...", "contact_email": "...", "domains": [...],
+    #        "dns_provider_api_token": "...", "account_key_pem": "...", "account_url": "..."}
     config: Mapped[dict] = mapped_column(JSONVariant, default=dict, nullable=False)
 
     # Reference to encrypted credentials in ca_credentials table
@@ -279,7 +281,7 @@ class Certificate(Base, TimestampMixin):
     )
     source_type: Mapped[str] = mapped_column(
         String(50), nullable=False
-    )  # aws_acm | azure_keyvault | adcs | manual | tls_scan
+    )  # aws_acm | azure_keyvault | adcs | acme | manual | tls_scan
     source_detail: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     # {"aws_arn": "...", "azure_vault_url": "...", "adcs_template": "..."}
 
@@ -483,7 +485,7 @@ class ScanJob(Base):
     id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
     job_type: Mapped[str] = mapped_column(
         String(50), nullable=False
-    )  # full_discovery | ca_sync | tls_scan | adcs_scan | ct_monitor
+    )  # full_discovery | ca_sync | tls_scan | adcs_scan | ct_monitor | acme_issue | acme_renew
     status: Mapped[str] = mapped_column(
         String(30), default="pending", nullable=False
     )  # pending | running | completed | failed | cancelled
@@ -628,4 +630,38 @@ class ComplianceReport(Base):
     generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+# ---------------------------------------------------------------------------
+# ACME private key bundles (encrypted at rest, time-boxed download)
+# ---------------------------------------------------------------------------
+class CertificateKeyBundle(Base):
+    """Holds an issued/renewed certificate's private key, encrypted at rest.
+
+    Created by AcmeService after a successful ACME issuance/renewal.
+    Exists only long enough for the operator to download and deploy it —
+    purge_expired_key_bundles() hard-deletes rows past expires_at whether
+    or not they were ever downloaded. Never exposed except through the
+    single authenticated, admin-only download endpoint.
+    """
+
+    __tablename__ = "certificate_key_bundles"
+
+    id: Mapped[str] = mapped_column(UUIDHex, primary_key=True, default=_new_uuid)
+    certificate_id: Mapped[str] = mapped_column(
+        UUIDHex, ForeignKey("certificates.id", ondelete="CASCADE"), nullable=False
+    )
+    scan_job_id: Mapped[str | None] = mapped_column(
+        UUIDHex, ForeignKey("scan_jobs.id", ondelete="SET NULL")
+    )
+    encrypted_private_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC) + timedelta(hours=48),
+        nullable=False,
     )

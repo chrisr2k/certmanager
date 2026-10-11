@@ -9,12 +9,27 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from certmanager.api.dependencies import get_current_active_user, get_db
+from certmanager.api.dependencies import get_current_active_user, get_db, require_permission
 from certmanager.connectors.secrets import encrypt_sensitive_values, redact_for_display
-from certmanager.core.exceptions import ConflictError, NotFoundError
+from certmanager.core.exceptions import ConflictError, NotFoundError, ValidationError
 from certmanager.core.models import CertificateAuthority, User
 
 router = APIRouter()
+
+
+class AcmeIssueRequest(BaseModel):
+    """Body for triggering an ACME certificate issuance."""
+
+    common_name: str
+    sans: list[str] | None = None
+    key_algorithm: str = "RSA-2048"
+    cert_type: str = "server"
+
+
+class AcmeRenewRequest(BaseModel):
+    """Body for triggering an ACME certificate renewal."""
+
+    certificate_id: str
 
 
 class AuthorityCreate(BaseModel):
@@ -274,5 +289,174 @@ async def trigger_authority_scan(
             "authority_id": authority_id,
             "status": "pending",
             "message": "CA scan dispatched. Monitor at GET /scans/{id}",
+        }
+    }
+
+
+def _dispatch_acme_job(job_id: str) -> None:
+    """Dispatch an ACME issue/renew job to the Celery worker. Falls back to
+    logging (job stays pending) if Celery is unavailable, same as every
+    other scan/report dispatch in this codebase."""
+    try:
+        from certmanager.workers.acme_worker import issue_or_renew_task
+
+        issue_or_renew_task.delay(job_id)
+    except Exception:
+        import structlog
+
+        structlog.get_logger().warning("celery_unavailable_acme_job_pending", job_id=job_id)
+
+
+@router.post("/{authority_id}/issue", status_code=201)
+async def issue_acme_certificate(
+    authority_id: str,
+    body: AcmeIssueRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Trigger ACME certificate issuance (DNS-01 via Cloudflare, async).
+
+    Only valid for ca_type="acme" authorities. Status is polled via the
+    existing GET /scans/{id} — there is no separate status endpoint.
+    """
+    from certmanager.core.models import ScanJob
+
+    result = await db.execute(
+        select(CertificateAuthority).where(CertificateAuthority.id == authority_id)
+    )
+    authority = result.scalar_one_or_none()
+    if not authority:
+        raise NotFoundError(f"Authority {authority_id} not found")
+    if authority.ca_type != "acme":
+        raise ValidationError(f"Authority {authority_id} is not an ACME authority")
+
+    job = ScanJob(
+        job_type="acme_issue",
+        status="pending",
+        triggered_by="manual",
+        triggered_by_user=current_user.id,
+        scope_config={
+            "authority_id": authority_id,
+            "common_name": body.common_name,
+            "sans": body.sans or [],
+            "key_algorithm": body.key_algorithm,
+            "cert_type": body.cert_type,
+        },
+    )
+    db.add(job)
+    await db.flush()
+    await db.refresh(job)
+
+    _dispatch_acme_job(str(job.id))
+
+    return {
+        "data": {
+            "scan_job_id": str(job.id),
+            "authority_id": authority_id,
+            "status": "pending",
+            "message": "Certificate issuance dispatched. Monitor at GET /scans/{id}.",
+        }
+    }
+
+
+@router.post("/{authority_id}/renew", status_code=201)
+async def renew_acme_certificate(
+    authority_id: str,
+    body: AcmeRenewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Trigger ACME certificate renewal for an existing certificate.
+
+    Renews using the domain set the certificate was actually issued for
+    (not the authority's config.domains, which only scopes discovery).
+    """
+    from certmanager.core.models import ScanJob
+
+    result = await db.execute(
+        select(CertificateAuthority).where(CertificateAuthority.id == authority_id)
+    )
+    authority = result.scalar_one_or_none()
+    if not authority:
+        raise NotFoundError(f"Authority {authority_id} not found")
+    if authority.ca_type != "acme":
+        raise ValidationError(f"Authority {authority_id} is not an ACME authority")
+
+    job = ScanJob(
+        job_type="acme_renew",
+        status="pending",
+        triggered_by="manual",
+        triggered_by_user=current_user.id,
+        scope_config={"authority_id": authority_id, "certificate_id": body.certificate_id},
+    )
+    db.add(job)
+    await db.flush()
+    await db.refresh(job)
+
+    _dispatch_acme_job(str(job.id))
+
+    return {
+        "data": {
+            "scan_job_id": str(job.id),
+            "authority_id": authority_id,
+            "status": "pending",
+            "message": "Certificate renewal dispatched. Monitor at GET /scans/{id}.",
+        }
+    }
+
+
+@router.get("/key-bundles/{bundle_id}/download")
+async def download_acme_key_bundle(
+    bundle_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("certificates", "download_key")),
+):
+    """Download an issued/renewed certificate's private key + chain.
+
+    Gated by an explicit `certificates:download_key` permission check —
+    deliberately NOT the automatic path-derived RBAC rule (which would
+    otherwise grant this to anyone with blanket authorities:read/create).
+    Admin-only unless that permission is explicitly granted to another
+    role. Time-boxed: 410 once past the bundle's expiry.
+    """
+    from fastapi import HTTPException
+
+    from certmanager.core.crypto import decrypt_value
+    from certmanager.core.models import Certificate, CertificateKeyBundle
+
+    result = await db.execute(
+        select(CertificateKeyBundle).where(CertificateKeyBundle.id == bundle_id)
+    )
+    bundle = result.scalar_one_or_none()
+    if not bundle:
+        raise NotFoundError(f"Key bundle {bundle_id} not found")
+
+    now = datetime.now(UTC)
+    expires_at = bundle.expires_at if bundle.expires_at.tzinfo else bundle.expires_at.replace(tzinfo=UTC)
+    if expires_at < now:
+        raise HTTPException(
+            status_code=410,
+            detail="This key bundle has expired and been purged from secure storage. "
+            "Trigger a new issuance/renewal to get a fresh one.",
+        )
+
+    cert_result = await db.execute(
+        select(Certificate).where(Certificate.id == bundle.certificate_id)
+    )
+    certificate = cert_result.scalar_one_or_none()
+    source_detail = (certificate.source_detail or {}) if certificate else {}
+
+    private_key_pem = decrypt_value(bundle.encrypted_private_key)
+
+    if bundle.downloaded_at is None:
+        bundle.downloaded_at = now
+        await db.flush()
+
+    return {
+        "data": {
+            "private_key_pem": private_key_pem,
+            "certificate_pem": source_detail.get("cert_pem", ""),
+            "chain_pem": source_detail.get("chain_pem", ""),
+            "fullchain_pem": source_detail.get("fullchain_pem", ""),
         }
     }

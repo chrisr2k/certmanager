@@ -29,6 +29,8 @@ SENSITIVE_KEYS = {
     "password",
     "access_key",
     "secret_access_key",
+    "dns_provider_api_token",
+    "account_key_pem",
 }
 
 _ENCRYPTED_MARKER = "__enc"

@@ -7,6 +7,13 @@ const CA_TYPES = [
   { value: 'aws_acm', label: 'AWS ACM' },
   { value: 'azure_keyvault', label: 'Azure Key Vault' },
   { value: 'adcs', label: 'Active Directory CS' },
+  { value: 'acme', label: "Let's Encrypt / ACME" },
+];
+
+const ACME_DIRECTORIES = [
+  { value: 'https://acme-v02.api.letsencrypt.org/directory', label: "Let's Encrypt (production)" },
+  { value: 'https://acme-staging-v02.api.letsencrypt.org/directory', label: "Let's Encrypt (staging — recommended for testing)" },
+  { value: 'custom', label: 'Custom directory URL' },
 ];
 
 export default function AddAuthorityModal({
@@ -56,6 +63,11 @@ export default function AddAuthorityModal({
         break;
       case 'adcs':
         pick(['agent_base_url', 'ca_server', 'ca_name', 'api_token', 'agent_id']);
+        break;
+      case 'acme':
+        pick(['contact_email', 'domains', 'dns_provider_api_token', 'cloudflare_zone_id']);
+        config.directory_url =
+          values.directory_url === 'custom' ? values.custom_directory_url : values.directory_url;
         break;
     }
     createMutation.mutate({
@@ -171,6 +183,43 @@ export default function AddAuthorityModal({
                   </Form.Item>
                   <Form.Item name="api_token" label="Agent API Token (optional)">
                     <Input.Password placeholder="Permanent agent token (encrypted at rest)" />
+                  </Form.Item>
+                </>
+              );
+            }
+            if (type === 'acme') {
+              return (
+                <>
+                  <Form.Item name="contact_email" label="Contact Email"
+                    rules={[{ required: true, type: 'email', message: 'A contact email is required' }]}>
+                    <Input placeholder="admin@example.com" />
+                  </Form.Item>
+                  <Form.Item name="domains" label="Domains"
+                    tooltip="ACME has no 'list everything' API — list every domain this CA entry manages"
+                    rules={[{ required: true, message: 'At least one domain is required' }]}>
+                    <Select mode="tags" placeholder="example.com (press Enter to add more)" open={false} suffixIcon={null} />
+                  </Form.Item>
+                  <Form.Item name="directory_url" label="Directory" initialValue={ACME_DIRECTORIES[1].value}>
+                    <Select options={ACME_DIRECTORIES} />
+                  </Form.Item>
+                  <Form.Item noStyle shouldUpdate={(prev, cur) => prev.directory_url !== cur.directory_url}>
+                    {({ getFieldValue: getField2 }) =>
+                      getField2('directory_url') === 'custom' ? (
+                        <Form.Item name="custom_directory_url" label="Custom Directory URL"
+                          rules={[{ required: true, message: 'Directory URL is required' }]}>
+                          <Input placeholder="https://your-acme-server.example/directory" />
+                        </Form.Item>
+                      ) : null
+                    }
+                  </Form.Item>
+                  <Form.Item name="dns_provider_api_token" label="Cloudflare API Token"
+                    tooltip="Needs Zone:DNS:Edit permission on the zone(s) covering the domains above"
+                    rules={[{ required: true, message: 'A Cloudflare API token is required for DNS-01' }]}>
+                    <Input.Password placeholder="Cloudflare API token (encrypted at rest)" />
+                  </Form.Item>
+                  <Form.Item name="cloudflare_zone_id" label="Cloudflare Zone ID (optional)"
+                    tooltip="Leave blank to resolve automatically from the domain">
+                    <Input placeholder="Resolved automatically if omitted" />
                   </Form.Item>
                 </>
               );

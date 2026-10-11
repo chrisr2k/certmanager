@@ -1,20 +1,85 @@
 import React, { useState } from 'react';
-import { Card, Table, Tag, Button, Space, Typography } from 'antd';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
-import apiClient from '../../api/client';
+import { Card, Table, Tag, Button, Space, Typography, Modal, Form, Input, Select, message } from 'antd';
+import { PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SyncOutlined, DownloadOutlined } from '@ant-design/icons';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import apiClient, { getEnveloped } from '../../api/client';
 import AddAuthorityModal from '../../components/AddAuthorityModal';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
+
+// Polls a scan job until it reaches a terminal state, surfacing a
+// "Download Key" action once an ACME job's key bundle is ready.
+function AcmeJobStatus({ jobId, onDone }: { jobId: string; onDone: () => void }) {
+  const { data: job } = useQuery({
+    queryKey: ['scan-job', jobId],
+    queryFn: () => getEnveloped(`/scans/${jobId}`),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'completed' || status === 'failed' ? false : 3000;
+    },
+  });
+
+  if (!job) return <Text type="secondary">Checking status…</Text>;
+
+  if (job.status === 'failed') {
+    return <Text type="danger">Failed: {job.error_detail?.[0] || 'unknown error'}</Text>;
+  }
+  if (job.status === 'completed' && job.download_url) {
+    return (
+      <Space>
+        <Tag color="green">Ready</Tag>
+        <Button
+          size="small"
+          type="primary"
+          icon={<DownloadOutlined />}
+          href={job.download_url}
+          target="_blank"
+          onClick={onDone}
+        >
+          Download Key
+        </Button>
+      </Space>
+    );
+  }
+  return <Tag color="blue">{job.status}…</Tag>;
+}
 
 export default function AuthoritiesList() {
+  const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
+  const [issueTarget, setIssueTarget] = useState<any>(null);
+  const [renewTarget, setRenewTarget] = useState<any>(null);
+  const [activeJob, setActiveJob] = useState<{ authorityId: string; jobId: string } | null>(null);
+  const [issueForm] = Form.useForm();
+  const [renewForm] = Form.useForm();
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['authorities'],
     queryFn: async () => {
       const { data } = await apiClient.get('/authorities');
       return data.data || [];
+    },
+  });
+
+  const issueMutation = useMutation({
+    mutationFn: ({ authorityId, values }: { authorityId: string; values: any }) =>
+      apiClient.post(`/authorities/${authorityId}/issue`, values),
+    onSuccess: (resp: any, { authorityId }) => {
+      message.success('Certificate issuance dispatched');
+      setActiveJob({ authorityId, jobId: resp.data.data.scan_job_id });
+      setIssueTarget(null);
+      issueForm.resetFields();
+    },
+  });
+
+  const renewMutation = useMutation({
+    mutationFn: ({ authorityId, values }: { authorityId: string; values: any }) =>
+      apiClient.post(`/authorities/${authorityId}/renew`, values),
+    onSuccess: (resp: any, { authorityId }) => {
+      message.success('Certificate renewal dispatched');
+      setActiveJob({ authorityId, jobId: resp.data.data.scan_job_id });
+      setRenewTarget(null);
+      renewForm.resetFields();
     },
   });
 
@@ -52,6 +117,21 @@ export default function AuthoritiesList() {
       key: 'active',
       render: (a: boolean) => <Tag color={a ? 'green' : 'default'}>{a ? 'Yes' : 'No'}</Tag>,
     },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: any, record: any) =>
+        record.ca_type === 'acme' ? (
+          <Space size="small">
+            <Button size="small" icon={<SafetyCertificateOutlined />} onClick={() => setIssueTarget(record)}>
+              Issue
+            </Button>
+            <Button size="small" icon={<SyncOutlined />} onClick={() => setRenewTarget(record)}>
+              Renew
+            </Button>
+          </Space>
+        ) : null,
+    },
   ];
 
   return (
@@ -64,6 +144,15 @@ export default function AuthoritiesList() {
         </Space>
       </div>
 
+      {activeJob && (
+        <Card size="small" style={{ marginBottom: 16 }} title="ACME job in progress">
+          <AcmeJobStatus
+            jobId={activeJob.jobId}
+            onDone={() => queryClient.invalidateQueries({ queryKey: ['certificates'] })}
+          />
+        </Card>
+      )}
+
       <Card>
         <Table
           dataSource={data}
@@ -75,6 +164,57 @@ export default function AuthoritiesList() {
       </Card>
 
       <AddAuthorityModal open={addOpen} onClose={() => setAddOpen(false)} />
+
+      <Modal
+        title={`Issue Certificate — ${issueTarget?.name || ''}`}
+        open={!!issueTarget}
+        onOk={() => issueForm.submit()}
+        confirmLoading={issueMutation.isPending}
+        onCancel={() => setIssueTarget(null)}
+        okText="Issue"
+      >
+        <Form
+          form={issueForm}
+          layout="vertical"
+          onFinish={(values) => issueMutation.mutate({ authorityId: issueTarget.id, values })}
+        >
+          <Form.Item name="common_name" label="Common Name"
+            rules={[{ required: true, message: 'Common name is required' }]}>
+            <Input placeholder="www.example.com" autoFocus />
+          </Form.Item>
+          <Form.Item name="sans" label="Additional SANs (optional)">
+            <Select mode="tags" placeholder="api.example.com (press Enter to add more)" open={false} suffixIcon={null} />
+          </Form.Item>
+          <Form.Item name="key_algorithm" label="Key Algorithm" initialValue="RSA-2048">
+            <Select options={[
+              { value: 'RSA-2048', label: 'RSA-2048' },
+              { value: 'RSA-4096', label: 'RSA-4096' },
+              { value: 'ECDSA-P256', label: 'ECDSA-P256' },
+            ]} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`Renew Certificate — ${renewTarget?.name || ''}`}
+        open={!!renewTarget}
+        onOk={() => renewForm.submit()}
+        confirmLoading={renewMutation.isPending}
+        onCancel={() => setRenewTarget(null)}
+        okText="Renew"
+      >
+        <Form
+          form={renewForm}
+          layout="vertical"
+          onFinish={(values) => renewMutation.mutate({ authorityId: renewTarget.id, values })}
+        >
+          <Form.Item name="certificate_id" label="Certificate"
+            tooltip="The inventory ID of the certificate to renew — find it on the Certificates page"
+            rules={[{ required: true, message: 'Certificate ID is required' }]}>
+            <Input placeholder="Certificate UUID from the Certificates page" autoFocus />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

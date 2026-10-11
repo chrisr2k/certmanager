@@ -1,6 +1,6 @@
 # CertManager — Enterprise Certificate Management Platform
 
-Multi-datacenter, multi-cloud certificate lifecycle management supporting AWS ACM, Azure Key Vault, and Active Directory Certificate Services.
+Multi-datacenter, multi-cloud certificate lifecycle management supporting AWS ACM, Azure Key Vault, Active Directory Certificate Services, and Let's Encrypt / ACME (DNS-01 via Cloudflare) — see [docs/letsencrypt.md](docs/letsencrypt.md).
 
 ## Architecture
 
@@ -180,6 +180,7 @@ model layer portable); production uses the PostgreSQL migration in
 - [x] Phase 5: Alerting + CT Monitoring (condition types, 4 notification backends, CT log monitor, alert rule builder UI)
 - [x] Phase 6: Compliance + CLI (Jinja2 report templates, PDF/CSV/JSON generation, audit log viewer, full CLI)
 - [x] Phase 7: Hardening (91-test suite, Kubernetes manifests with HPA, ingress, kustomization in `deploy/k8s/`, Terraform for AWS + Azure, refresh-token rotation, encrypted CA credentials, RBAC read enforcement, API keys)
+- [x] Phase 8: Let's Encrypt / ACME (real issuance, renewal, and revocation via DNS-01/Cloudflare, scheduled auto-renewal, encrypted time-boxed key download — see [docs/letsencrypt.md](docs/letsencrypt.md))
 
 ### Known limitations
 

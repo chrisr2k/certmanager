@@ -126,6 +126,7 @@ class CAConnector(ABC):
     - AWS Certificate Manager (ACM)
     - Azure Key Vault
     - Active Directory Certificate Services (via datacenter agent)
+    - ACME / Let's Encrypt (DNS-01 via Cloudflare)
     - (Future: Google Certificate Manager, HashiCorp Vault PKI, etc.)
 
     The pattern mirrors the LLMProvider ABC in entra-pentest:
@@ -136,7 +137,7 @@ class CAConnector(ABC):
     @property
     @abstractmethod
     def connector_type(self) -> str:
-        """Unique string identifying this connector type: aws_acm, azure_keyvault, adcs."""
+        """Unique string identifying this connector type: aws_acm, azure_keyvault, adcs, acme."""
 
     @abstractmethod
     async def health_check(self) -> CAHealthResult:
