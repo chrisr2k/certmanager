@@ -452,11 +452,18 @@ async def download_acme_key_bundle(
         bundle.downloaded_at = now
         await db.flush()
 
+    cert_pem = source_detail.get("cert_pem", "")
+    chain_pem = source_detail.get("chain_pem", "")
+    # Reconstructed rather than stored (cert_pem + chain_pem is all it is) —
+    # falls back to an already-stored copy for certs issued before this
+    # stopped being persisted separately.
+    fullchain_pem = source_detail.get("fullchain_pem") or f"{cert_pem}\n{chain_pem}".strip()
+
     return {
         "data": {
             "private_key_pem": private_key_pem,
-            "certificate_pem": source_detail.get("cert_pem", ""),
-            "chain_pem": source_detail.get("chain_pem", ""),
-            "fullchain_pem": source_detail.get("fullchain_pem", ""),
+            "certificate_pem": cert_pem,
+            "chain_pem": chain_pem,
+            "fullchain_pem": fullchain_pem,
         }
     }

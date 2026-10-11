@@ -318,10 +318,13 @@ class ACMEConnector(CAConnector):
             serialization.NoEncryption(),
         ).decode()
 
+        # fullchain_pem is just cert_pem + chain_pem concatenated — not
+        # stored separately (it was ~2x the data for zero new information,
+        # and dumped raw into the certificate detail page's metadata view).
+        # The download endpoint reconstructs it on the fly.
         record = self._parse_x509(leaf, request.cert_type, {
             "cert_pem": leaf_pem,
             "chain_pem": chain_pem,
-            "fullchain_pem": fullchain_pem,
             "acme_order_url": order.uri,
         })
         return IssueResult(certificate=record, private_key_pem=key_pem)

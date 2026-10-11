@@ -1,6 +1,6 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Descriptions, Tag, Button, Space, Typography, Spin, Timeline } from 'antd';
+import { Card, Descriptions, Tag, Button, Space, Typography, Spin, Timeline, Collapse } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '../../api/client';
@@ -35,6 +35,15 @@ export default function CertificateDetail() {
   const daysLeft = Math.ceil(
     (new Date(cert.not_after).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
   );
+
+  // source_detail can carry multi-KB PEM blobs (e.g. ACME's cert_pem/
+  // chain_pem) — those get their own section below, not dumped as raw
+  // JSON into a half-width table cell. Only short scalar values stay
+  // in the generic Source Detail row.
+  const sourceDetail: Record<string, unknown> = cert.source_detail || {};
+  const isLongValue = (v: unknown) => typeof v === 'string' && v.length > 200;
+  const pemEntries = Object.entries(sourceDetail).filter(([, v]) => isLongValue(v));
+  const shortEntries = Object.entries(sourceDetail).filter(([, v]) => !isLongValue(v));
 
   return (
     <div>
@@ -79,8 +88,16 @@ export default function CertificateDetail() {
           <Descriptions.Item label="Type">{cert.cert_type || 'N/A'}</Descriptions.Item>
           <Descriptions.Item label="Wildcard">{cert.is_wildcard ? 'Yes' : 'No'}</Descriptions.Item>
           <Descriptions.Item label="Source">{cert.source_type?.replace('_', ' ').toUpperCase()}</Descriptions.Item>
-          <Descriptions.Item label="Source Detail">
-            <pre style={{ fontSize: 11, margin: 0 }}>{JSON.stringify(cert.source_detail, null, 2)}</pre>
+          <Descriptions.Item label="Source Detail" span={2}>
+            {shortEntries.length ? (
+              <Space wrap size={[8, 4]}>
+                {shortEntries.map(([k, v]) => (
+                  <Tag key={k}>{`${k}: ${String(v)}`}</Tag>
+                ))}
+              </Space>
+            ) : (
+              'None'
+            )}
           </Descriptions.Item>
           <Descriptions.Item label="SANs" span={2}>
             {cert.sans?.length ? cert.sans.join(', ') : 'None'}
@@ -101,6 +118,32 @@ export default function CertificateDetail() {
           </Descriptions.Item>
         </Descriptions>
       </Card>
+
+      {pemEntries.length > 0 && (
+        <Card title="Certificate Material" style={{ marginBottom: 16 }}>
+          <Collapse
+            items={pemEntries.map(([k, v]) => ({
+              key: k,
+              label: k,
+              children: (
+                <pre
+                  style={{
+                    fontSize: 11,
+                    margin: 0,
+                    maxHeight: 220,
+                    overflow: 'auto',
+                    background: '#fafafa',
+                    padding: 8,
+                    borderRadius: 4,
+                  }}
+                >
+                  {String(v)}
+                </pre>
+              ),
+            }))}
+          />
+        </Card>
+      )}
 
       <Card title="Validity Timeline">
         <Timeline
