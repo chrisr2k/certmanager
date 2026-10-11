@@ -16,6 +16,17 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+# Side-effecting import: constructs the configured Celery app (broker=redis,
+# etc.) and registers it as Celery's "current app" for this process. Every
+# @shared_task's .delay()/.apply_async() resolves against whatever app is
+# current at call time — without this, nothing in the API process ever
+# imports certmanager.workers.celery_app, so Celery falls back to its
+# library default (amqp://guest@localhost), and every direct-dispatch job
+# (full_discovery, ca_sync, compliance reports, ACME issue/renew) silently
+# fails with "connection refused" and stays stuck in "pending" forever —
+# masked because each dispatch call site swallows the exception and just
+# logs a "celery unavailable" warning.
+import certmanager.workers.celery_app  # noqa: F401
 from certmanager.api.middleware.audit import AuditLogMiddleware
 from certmanager.api.middleware.correlation_id import CorrelationIDMiddleware
 from certmanager.api.middleware.rate_limit import RateLimitMiddleware
