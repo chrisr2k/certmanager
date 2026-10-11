@@ -32,6 +32,7 @@ app = Celery(
         "certmanager.workers.report_worker",
         "certmanager.workers.ct_log_worker",
         "certmanager.workers.acme_worker",
+        "certmanager.workers.adcs_worker",
     ],
 )
 
@@ -96,5 +97,10 @@ app.conf.beat_schedule = {
     "acme-purge-key-bundles": {
         "task": "certmanager.workers.acme_worker.purge_expired_key_bundles",
         "schedule": crontab(hour=5, minute=30),
+    },
+    # AD CS auto-renewal — runs daily at 05:15 UTC
+    "adcs-auto-renew": {
+        "task": "certmanager.workers.adcs_worker.auto_renew_expiring_adcs_certs",
+        "schedule": crontab(hour=5, minute=15),
     },
 }

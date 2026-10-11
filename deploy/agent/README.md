@@ -189,21 +189,67 @@ curl -X POST https://api.example.com/api/v1/scans \
 Status mapping comes from the index: `V` → active, `R` → revoked,
 `E` → expired (a `V` cert past its expiry date is reported as expired).
 
-## 7. AD CS agents and the connector listener
+## 7. AD CS agents: automated issuance, renewal, and revocation
 
-For `adcs` / `generic` agents, the agent also serves a local HTTP(S)
-listener (`listener_port`, default 8443) so the central **AD CS
-connector** can reach back into the datacenter. This is the only inbound
-socket; it authenticates callers with the agent's permanent token, which
-is printed **once** at first registration and stored in the agent's local
-data dir.
+**Lifecycle operations (issue/renew/revoke) never use the connector
+listener described below.** They run entirely through the same outbound
+poll loop TLS/OpenSSL discovery already uses: central creates a pending
+`ScanJob`, the agent picks it up on its next poll, runs `certreq`/
+`certutil` locally against the CA it already has network access to, and
+reports the result back over the same outbound HTTPS connection. The
+agent is never reachable *from* central for this — no inbound exposure,
+no VPN/tunnel, ever required for issuance or renewal.
 
-- Keep `listener_enabled: false` for pure TLS-scanning agents.
-- Mutual TLS: set `listener_ssl_cert`, `listener_ssl_key`, and
-  `listener_ssl_ca` (client CA) in the config to require client
-  certificates on top of the bearer token.
-- The CA config on the central side needs `agent_base_url`, `ca_server`,
-  `ca_name`, and the agent token in the credential config.
+Trigger issuance/renewal from the Certificate Authorities page (Issue /
+Renew buttons) or `POST /authorities/{id}/issue` \| `/renew` \|
+`/revoke`. Status is polled the same way as an ACME job, at
+`GET /scans/{id}`.
+
+**Two separate prerequisites — easy to conflate, and the failure modes
+look nothing alike:**
+
+1. **AD-side permission.** The service account the agent runs as needs
+   Enroll permission on the certificate template, and the template must
+   be permitted for autoenrollment. A manual-approval template returns a
+   pending RequestID instead of an issued certificate — this version
+   treats that as an immediate, clearly-worded job failure rather than
+   polling for approval.
+2. **Local OS permission.** The request `.inf` sets `MachineKeySet=TRUE`,
+   which requires the agent process to run as `LocalSystem` (or hold
+   explicit ACLs on `HKLM\SOFTWARE\Microsoft\SystemCertificates` and
+   `%ProgramData%\Microsoft\Crypto\{RSA,Keys}`). Getting this wrong
+   produces a cryptic `NTE_BAD_KEYSET` that looks nothing like a
+   permissions problem — check the service account first.
+
+**Key custody — local-only by default.** The CA config's
+`deliver_key_to_central` is `false` by default: the agent generates the
+key/CSR locally and the private key never leaves it. Two deployment
+targets:
+
+- `deployment_target: "store"` (default) — installs into the local
+  machine certificate store. Nothing is exported unless
+  `deliver_key_to_central` is also on.
+- `deployment_target: "file"` — exports the key + fullchain PEM to
+  `deployment_path` (e.g. for nginx or another non-store-aware service),
+  then removes the now-redundant store copy. An optional
+  `post_install_hook` command runs afterward (e.g. to rebind IIS), with
+  the new certificate's thumbprint/serial/CN passed as environment
+  variables.
+
+Turning `deliver_key_to_central` on sends a copy of the private key back
+over the same outbound connection, stored encrypted with a 48-hour
+download window — the same mechanism and Download Key button the ACME
+connector uses. Only enable it if you need to retrieve a copy centrally.
+
+### The connector listener (not used for lifecycle ops)
+
+For `adcs` / `generic` agents, the agent can also serve a local HTTP(S)
+listener (`listener_port`, default 8443) intended for the central AD CS
+connector to reach back into the datacenter — a push model. **Every
+route on this path remains an unimplemented stub (HTTP 501)**; it is not
+the recommended path and is not used by the polling-based flow above.
+Leave `listener_enabled: false` unless you are specifically developing
+against that connector.
 
 ## 8. Air-gap mode (no network path to central)
 

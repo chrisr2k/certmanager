@@ -288,7 +288,7 @@ class Certificate(Base, TimestampMixin):
     # Status
     status: Mapped[str] = mapped_column(
         String(30), default="active"
-    )  # active | expired | revoked | pending_revocation | unknown
+    )  # active | expired | revoked | superseded | pending_revocation | unknown
     is_wildcard: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_ca: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
@@ -486,6 +486,7 @@ class ScanJob(Base):
     job_type: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # full_discovery | ca_sync | tls_scan | adcs_scan | ct_monitor | acme_issue | acme_renew
+    # | adcs_issue | adcs_renew | adcs_revoke
     status: Mapped[str] = mapped_column(
         String(30), default="pending", nullable=False
     )  # pending | running | completed | failed | cancelled

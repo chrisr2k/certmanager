@@ -34,6 +34,20 @@ router = APIRouter()
 # before expiry instead of running a refresh-token flow.
 AGENT_TOKEN_TTL = timedelta(days=30)
 
+# Maps agent job_type -> Certificate.source_type for inventory persistence.
+# Falls back to "adcs" for any job type not listed (the historical default
+# before this map existed) rather than raising, since new agent job types
+# are expected to appear here over time.
+_JOB_TYPE_SOURCE_TYPE = {
+    "tls_scan": "tls_scan",
+    "openssl_ca_scan": "openssl_ca",
+    "ca_sync": "adcs",
+    "adcs_scan": "adcs",
+    "full_discovery": "adcs",
+    "adcs_issue": "adcs",
+    "adcs_renew": "adcs",
+}
+
 SENSITIVE_PSK_HINT = "[REDACTED]"
 
 
@@ -297,20 +311,63 @@ async def submit_job_result(
     job.total_errors = result_data.get("total_errors", 0)
     agent.last_job_at = datetime.now(UTC)
 
-    # Merge results: persist discovered certificates into the inventory
     cert_dicts = result_data.get("certificates", [])
+
+    # Lifecycle ops (issue/renew) can fail outright (e.g. a manual-approval
+    # AD CS template) with no certificate produced at all — discovery jobs
+    # never "fail" this way, so this only applies to those job types.
+    if (
+        job.job_type in ("adcs_issue", "adcs_renew", "adcs_revoke")
+        and not cert_dicts
+        and result_data.get("errors")
+    ):
+        job.status = "failed"
+        job.error_detail = result_data["errors"]
+
+    if job.job_type == "adcs_revoke":
+        if job.status != "failed":
+            from certmanager.core.models import Certificate
+
+            target_cert_id = job.scope_config.get("certificate_id")
+            if target_cert_id:
+                cert_result = await db.execute(
+                    select(Certificate).where(Certificate.id == target_cert_id)
+                )
+                target_cert = cert_result.scalar_one_or_none()
+                if target_cert:
+                    target_cert.status = "revoked"
+        await db.flush()
+        return {
+            "data": {
+                "job_id": job_id,
+                "status": job.status,
+                "certificates_received": 0,
+                "persisted": {"new": 0, "updated": 0, "unchanged": 0, "errors": 0},
+            }
+        }
+
+    # Merge results: persist discovered/issued certificates into the inventory
     upsert_stats = {"new": 0, "updated": 0, "unchanged": 0, "errors": 0}
+    key_bundle_id = None
     if cert_dicts:
         from certmanager.services.certificate_service import CertificateService
 
         records = [_certificate_record_from_agent_data(d) for d in cert_dicts]
         records = [r for r in records if r is not None]
 
-        source_type = "tls_scan" if job.job_type == "tls_scan" else "adcs"
+        source_type = _JOB_TYPE_SOURCE_TYPE.get(job.job_type, "adcs")
+        # adcs_issue/adcs_renew certs belong to a specific CA row; plain
+        # agent discovery may have no central CA row to attribute to.
+        source_ca_id = (
+            job.scope_config.get("authority_id")
+            if job.job_type in ("adcs_issue", "adcs_renew")
+            else None
+        )
+
         service = CertificateService(db)
         upsert_stats = await service.upsert_from_discovery(
             records=records,
-            source_ca_id=None,  # agent-discovered certs may have no central CA row
+            source_ca_id=source_ca_id,
             source_type=source_type,
             datacenter_id=agent.datacenter_id,
             scan_job_id=job_id,
@@ -321,16 +378,65 @@ async def submit_job_result(
         job.total_updated = upsert_stats["updated"]
         job.total_errors += upsert_stats["errors"]
 
+        if job.job_type == "adcs_renew":
+            # certreq always generates a fresh key/CSR/serial, so the
+            # upsert above can never match the renewal back to the
+            # certificate it replaced — it always inserts a new row and
+            # leaves the old one at status="active". Without this, the
+            # daily auto-renewal scheduler would re-select that same old
+            # row indefinitely (a renewal storm against a real CA with no
+            # staging environment to absorb it).
+            old_cert_id = job.scope_config.get("certificate_id")
+            if old_cert_id:
+                from certmanager.core.models import Certificate
+
+                old_result = await db.execute(
+                    select(Certificate).where(Certificate.id == old_cert_id)
+                )
+                old_cert = old_result.scalar_one_or_none()
+                if old_cert:
+                    old_cert.status = "superseded"
+
+        # Opt-in key delivery: only present when the CA's
+        # deliver_key_to_central was enabled, in which case the agent
+        # included private_key_pem on the issued cert. Store it exactly
+        # as AcmeService.issue_or_renew does, reusing the existing
+        # CertificateKeyBundle + download endpoint with no further changes.
+        if job.job_type in ("adcs_issue", "adcs_renew"):
+            from certmanager.core.crypto import encrypt_value
+            from certmanager.core.models import Certificate, CertificateKeyBundle
+
+            for d in cert_dicts:
+                private_key_pem = d.get("private_key_pem")
+                thumbprint = d.get("thumbprint") or d.get("thumbprint_sha256")
+                if not private_key_pem or not thumbprint:
+                    continue
+                cert_row = await db.execute(
+                    select(Certificate).where(Certificate.thumbprint_sha256 == thumbprint)
+                )
+                certificate = cert_row.scalar_one_or_none()
+                if certificate is None:
+                    continue
+                bundle = CertificateKeyBundle(
+                    certificate_id=certificate.id,
+                    scan_job_id=job_id,
+                    encrypted_private_key=encrypt_value(private_key_pem),
+                )
+                db.add(bundle)
+                await db.flush()
+                key_bundle_id = bundle.id
+
     await db.flush()
 
-    return {
-        "data": {
-            "job_id": job_id,
-            "status": "completed",
-            "certificates_received": len(cert_dicts),
-            "persisted": upsert_stats,
-        }
+    response_data = {
+        "job_id": job_id,
+        "status": job.status,
+        "certificates_received": len(cert_dicts),
+        "persisted": upsert_stats,
     }
+    if key_bundle_id:
+        response_data["key_bundle_id"] = key_bundle_id
+    return {"data": response_data}
 
 
 def _certificate_record_from_agent_data(data: dict):
@@ -386,7 +492,17 @@ def _certificate_record_from_agent_data(data: dict):
         source_detail={
             k: v
             for k, v in data.items()
-            if k in ("request_id", "template", "ca_server", "ca_name", "host", "port")
+            if k
+            in (
+                "request_id",
+                "template",
+                "ca_server",
+                "ca_name",
+                "host",
+                "port",
+                "cert_pem",
+                "chain_pem",
+            )
         },
         source_id=source_id,
         status=data.get("status", "active"),

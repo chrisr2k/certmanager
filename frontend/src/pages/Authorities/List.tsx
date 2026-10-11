@@ -9,8 +9,10 @@ import { saveTextFile } from '../../utils/download';
 const { Title, Text } = Typography;
 
 // Polls a scan job until it reaches a terminal state, surfacing a
-// "Download Key" action once an ACME job's key bundle is ready.
-function AcmeJobStatus({ jobId, onDone }: { jobId: string; onDone: () => void }) {
+// "Download Key" action once an issue/renew job's key bundle is ready.
+// Shared by ACME (always produces a bundle) and AD CS (only produces one
+// when deliver_key_to_central is enabled on the CA).
+function IssuanceJobStatus({ jobId, onDone }: { jobId: string; onDone: () => void }) {
   const { data: job } = useQuery({
     queryKey: ['scan-job', jobId],
     queryFn: () => getEnveloped(`/scans/${jobId}`),
@@ -62,6 +64,11 @@ function AcmeJobStatus({ jobId, onDone }: { jobId: string; onDone: () => void })
         </Button>
       </Space>
     );
+  }
+  if (job.status === 'completed') {
+    // AD CS without deliver_key_to_central — the key stayed on the agent
+    // and was never sent here, so there's nothing to download.
+    return <Tag color="green">Completed — key stayed on the agent</Tag>;
   }
   return <Tag color="blue">{job.status}…</Tag>;
 }
@@ -143,7 +150,7 @@ export default function AuthoritiesList() {
       title: 'Actions',
       key: 'actions',
       render: (_: any, record: any) =>
-        record.ca_type === 'acme' ? (
+        record.ca_type === 'acme' || record.ca_type === 'adcs' ? (
           <Space size="small">
             <Button size="small" icon={<SafetyCertificateOutlined />} onClick={() => setIssueTarget(record)}>
               Issue
@@ -167,8 +174,8 @@ export default function AuthoritiesList() {
       </div>
 
       {activeJob && (
-        <Card size="small" style={{ marginBottom: 16 }} title="ACME job in progress">
-          <AcmeJobStatus
+        <Card size="small" style={{ marginBottom: 16 }} title="Certificate job in progress">
+          <IssuanceJobStatus
             jobId={activeJob.jobId}
             onDone={() => queryClient.invalidateQueries({ queryKey: ['certificates'] })}
           />

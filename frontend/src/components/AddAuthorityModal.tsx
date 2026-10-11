@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Modal, Form, Input, Select, message } from 'antd';
+import { Modal, Form, Input, Select, Switch, message } from 'antd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiClient, { getEnveloped } from '../api/client';
 
@@ -62,7 +62,18 @@ export default function AddAuthorityModal({
         pick(['vault_url', 'tenant_id', 'client_id', 'client_secret']);
         break;
       case 'adcs':
-        pick(['agent_base_url', 'ca_server', 'ca_name', 'api_token', 'agent_id']);
+        pick([
+          'agent_base_url',
+          'ca_server',
+          'ca_name',
+          'api_token',
+          'agent_id',
+          'template',
+          'deployment_target',
+          'deployment_path',
+          'post_install_hook',
+          'deliver_key_to_central',
+        ]);
         break;
       case 'acme':
         pick(['contact_email', 'domains', 'dns_provider_api_token', 'cloudflare_zone_id']);
@@ -183,6 +194,36 @@ export default function AddAuthorityModal({
                   </Form.Item>
                   <Form.Item name="api_token" label="Agent API Token (optional)">
                     <Input.Password placeholder="Permanent agent token (encrypted at rest)" />
+                  </Form.Item>
+                  <Form.Item name="template" label="Default Template"
+                    tooltip="AD CS certificate template to request from — must be permitted for autoenrollment (manual-approval templates aren't supported)"
+                    rules={[{ required: true, message: 'A certificate template is required' }]}>
+                    <Input placeholder="e.g. WebServer" />
+                  </Form.Item>
+                  <Form.Item name="deployment_target" label="Deployment Target" initialValue="store">
+                    <Select options={[
+                      { value: 'store', label: 'Windows certificate store (default)' },
+                      { value: 'file', label: 'Export to file path' },
+                    ]} />
+                  </Form.Item>
+                  <Form.Item noStyle shouldUpdate={(prev, cur) => prev.deployment_target !== cur.deployment_target}>
+                    {({ getFieldValue: getDeployTarget }) =>
+                      getDeployTarget('deployment_target') === 'file' ? (
+                        <Form.Item name="deployment_path" label="Deployment Path"
+                          tooltip="Base path without extension — becomes <path>.key.pem and <path>.fullchain.pem"
+                          rules={[{ required: true, message: 'A deployment path is required for file export' }]}>
+                          <Input placeholder="C:\certs\mysite" />
+                        </Form.Item>
+                      ) : null
+                    }
+                  </Form.Item>
+                  <Form.Item name="post_install_hook" label="Post-Install Hook (optional)"
+                    tooltip="Command run after issuance/renewal — receives the new cert's thumbprint/serial/CN as environment variables">
+                    <Input placeholder="e.g. powershell C:\scripts\rebind-iis.ps1" />
+                  </Form.Item>
+                  <Form.Item name="deliver_key_to_central" label="Deliver Key to Central" valuePropName="checked" initialValue={false}
+                    tooltip="Off by default — the private key never leaves the agent. Turning this on sends a copy of the private key to this platform (encrypted at rest, 48h download window). Only enable if you need to retrieve a copy centrally.">
+                    <Switch />
                   </Form.Item>
                 </>
               );

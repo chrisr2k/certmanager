@@ -61,7 +61,7 @@ class CertManagerAgent:
         from certmanager.agent.local_db import LocalDB
 
         # Local database for offline buffering
-        self._local_db = LocalDB(self.settings.local_db_path)
+        self._local_db = LocalDB(self.settings.local_db_path, psk=self.settings.psk)
 
         # API client
         self._api_client = AgentAPIClient(
@@ -289,7 +289,7 @@ class CertManagerAgent:
 
         # Find the right scanner for this job type
         scanner: ScannerPlugin | None = None
-        if job_type in ("ca_sync", "adcs_scan", "full_discovery"):
+        if job_type in ("ca_sync", "adcs_scan", "full_discovery", "adcs_issue", "adcs_renew", "adcs_revoke"):
             scanner = next(
                 (s for s in self._scanners if s.name == "adcs"),
                 None,
@@ -328,9 +328,17 @@ class CertManagerAgent:
             )
             return
 
-        # Execute scan
+        # Execute scan (or, for AD CS lifecycle jobs, the matching operation —
+        # these don't go through scan() at all)
         try:
-            result = await scanner.scan(scope)
+            if job_type == "adcs_issue":
+                result = await scanner.issue(scope)
+            elif job_type == "adcs_renew":
+                result = await scanner.renew(scope)
+            elif job_type == "adcs_revoke":
+                result = await scanner.revoke(scope)
+            else:
+                result = await scanner.scan(scope)
             api_result = result.to_api_result()
         except Exception as e:
             logger.error("scan_failed", job_id=job_id, error=str(e))

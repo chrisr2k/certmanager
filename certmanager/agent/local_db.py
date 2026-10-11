@@ -12,22 +12,84 @@ Schema:
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
 
 import structlog
+from cryptography.fernet import Fernet
 
 logger = structlog.get_logger()
 
 
 class LocalDB:
-    """SQLite-based local buffer for offline resilience."""
+    """SQLite-based local buffer for offline resilience.
 
-    def __init__(self, db_path: str):
+    `psk` (the agent's own pre-shared key) derives a local-only Fernet key
+    used to encrypt any `private_key_pem` field before it touches disk.
+    This only matters for adcs_issue/adcs_renew results where the CA has
+    `deliver_key_to_central` enabled — ordinary discovery results never
+    carry a private key and are unaffected. Mirrors the fallback key
+    derivation `certmanager/core/crypto.py`'s `_get_fernet()` uses
+    centrally, keyed off a secret the agent already holds rather than
+    distributing the central encryption key to every agent.
+    """
+
+    def __init__(self, db_path: str, psk: str | None = None):
         self.db_path = db_path
+        self._fernet = self._derive_fernet(psk) if psk else None
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
+
+    @staticmethod
+    def _derive_fernet(psk: str) -> Fernet:
+        digest = hashlib.sha256(psk.encode("utf-8")).digest()
+        return Fernet(base64.urlsafe_b64encode(digest))
+
+    def _encrypt_private_keys(self, result: dict) -> dict:
+        """Encrypt private_key_pem fields before writing to the local
+        plaintext-JSON buffer table. No-op without a configured PSK or
+        when the result carries no private key."""
+        if not self._fernet:
+            return result
+        certs = result.get("certificates")
+        if not certs:
+            return result
+        result = dict(result)
+        new_certs = []
+        for cert in certs:
+            if isinstance(cert, dict) and cert.get("private_key_pem"):
+                cert = dict(cert)
+                cert["private_key_pem"] = self._fernet.encrypt(
+                    cert["private_key_pem"].encode("utf-8")
+                ).decode("ascii")
+                cert["_private_key_encrypted"] = True
+            new_certs.append(cert)
+        result["certificates"] = new_certs
+        return result
+
+    def _decrypt_private_keys(self, result: dict) -> dict:
+        """Reverse _encrypt_private_keys, called just before a buffered
+        result is resubmitted — the value sent over the wire is the
+        plaintext PEM, same as a result that was never buffered."""
+        if not self._fernet:
+            return result
+        certs = result.get("certificates")
+        if not certs:
+            return result
+        new_certs = []
+        for cert in certs:
+            if isinstance(cert, dict) and cert.get("_private_key_encrypted"):
+                cert = dict(cert)
+                cert["private_key_pem"] = self._fernet.decrypt(
+                    cert["private_key_pem"].encode("ascii")
+                ).decode("utf-8")
+                del cert["_private_key_encrypted"]
+            new_certs.append(cert)
+        result["certificates"] = new_certs
+        return result
 
     def _get_conn(self) -> sqlite3.Connection:
         """Get a SQLite connection with WAL mode and foreign keys."""
@@ -81,6 +143,7 @@ class LocalDB:
         Returns:
             Row ID of the buffered result.
         """
+        result = self._encrypt_private_keys(result)
         with self._get_conn() as conn:
             cursor = conn.execute(
                 "INSERT INTO pending_results (job_id, result_json) VALUES (?, ?)",
@@ -111,7 +174,7 @@ class LocalDB:
                 {
                     "row_id": row["id"],
                     "job_id": row["job_id"],
-                    "result": json.loads(row["result_json"]),
+                    "result": self._decrypt_private_keys(json.loads(row["result_json"])),
                     "created_at": row["created_at"],
                     "retry_count": row["retry_count"],
                 }

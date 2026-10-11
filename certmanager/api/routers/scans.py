@@ -14,8 +14,16 @@ from certmanager.core.models import ScanJob, User
 router = APIRouter()
 
 # Job types executed by a datacenter AGENT (polled via /agents/{id}/jobs),
-# as opposed to CA-connector scans that run in the Celery worker.
-AGENT_JOB_TYPES = {"tls_scan", "openssl_ca_scan"}
+# as opposed to CA-connector scans that run in the Celery worker. AD CS
+# lifecycle ops are agent-executed too — certreq runs locally against a CA
+# the agent already has network access to, never requiring inbound
+# exposure to the agent. In practice these are created directly by
+# certmanager/api/routers/authorities.py's ca_type-aware issue/renew/revoke
+# endpoints (which have the CertificateAuthority config this generic
+# trigger_scan endpoint doesn't); they're listed here so a job of this
+# type submitted through this endpoint is still correctly left pending
+# for the agent instead of being sent to Celery.
+AGENT_JOB_TYPES = {"tls_scan", "openssl_ca_scan", "adcs_issue", "adcs_renew", "adcs_revoke"}
 
 
 class ScanTriggerRequest(BaseModel):
@@ -188,7 +196,7 @@ async def get_scan(
         "created_at": job.created_at.isoformat(),
     }
 
-    if job.job_type in ("acme_issue", "acme_renew"):
+    if job.job_type in ("acme_issue", "acme_renew", "adcs_issue", "adcs_renew"):
         from certmanager.core.models import CertificateKeyBundle
 
         bundle_result = await db.execute(

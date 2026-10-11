@@ -32,6 +32,13 @@ class AcmeRenewRequest(BaseModel):
     certificate_id: str
 
 
+class RevokeRequest(BaseModel):
+    """Body for revoking an issued certificate at its issuing CA."""
+
+    certificate_id: str
+    reason_code: int = 0
+
+
 class AuthorityCreate(BaseModel):
     """Body for registering a certificate authority."""
 
@@ -314,10 +321,13 @@ async def issue_acme_certificate(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Trigger ACME certificate issuance (DNS-01 via Cloudflare, async).
+    """Trigger certificate issuance for an ACME or AD CS authority.
 
-    Only valid for ca_type="acme" authorities. Status is polled via the
-    existing GET /scans/{id} — there is no separate status endpoint.
+    ACME dispatches immediately to the Celery worker (DNS-01 via
+    Cloudflare). AD CS creates the identical ScanJob shape but leaves it
+    `pending` for the agent to pick up on its next poll cycle — no
+    Celery dispatch, no inbound exposure to the agent ever required.
+    Status is polled via the existing GET /scans/{id} either way.
     """
     from certmanager.core.models import ScanJob
 
@@ -327,34 +337,62 @@ async def issue_acme_certificate(
     authority = result.scalar_one_or_none()
     if not authority:
         raise NotFoundError(f"Authority {authority_id} not found")
-    if authority.ca_type != "acme":
-        raise ValidationError(f"Authority {authority_id} is not an ACME authority")
+    if authority.ca_type not in ("acme", "adcs"):
+        raise ValidationError(f"Authority {authority_id} does not support issuance")
 
-    job = ScanJob(
-        job_type="acme_issue",
-        status="pending",
-        triggered_by="manual",
-        triggered_by_user=current_user.id,
-        scope_config={
-            "authority_id": authority_id,
-            "common_name": body.common_name,
-            "sans": body.sans or [],
-            "key_algorithm": body.key_algorithm,
-            "cert_type": body.cert_type,
-        },
-    )
-    db.add(job)
-    await db.flush()
-    await db.refresh(job)
+    if authority.ca_type == "acme":
+        job = ScanJob(
+            job_type="acme_issue",
+            status="pending",
+            triggered_by="manual",
+            triggered_by_user=current_user.id,
+            scope_config={
+                "authority_id": authority_id,
+                "common_name": body.common_name,
+                "sans": body.sans or [],
+                "key_algorithm": body.key_algorithm,
+                "cert_type": body.cert_type,
+            },
+        )
+        db.add(job)
+        await db.flush()
+        await db.refresh(job)
+        _dispatch_acme_job(str(job.id))
+        message = "Certificate issuance dispatched. Monitor at GET /scans/{id}."
+    else:
+        config = authority.config or {}
+        agent_id = config.get("agent_id")
+        if not agent_id:
+            raise ValidationError(f"Authority {authority_id} has no agent_id configured")
 
-    _dispatch_acme_job(str(job.id))
+        job = ScanJob(
+            job_type="adcs_issue",
+            status="pending",
+            triggered_by="manual",
+            triggered_by_user=current_user.id,
+            scope_config={
+                "agent_id": agent_id,
+                "authority_id": authority_id,
+                "common_name": body.common_name,
+                "sans": body.sans or [],
+                "template": config.get("template", ""),
+                "deployment_target": config.get("deployment_target", "store"),
+                "deployment_path": config.get("deployment_path", ""),
+                "post_install_hook": config.get("post_install_hook", ""),
+                "deliver_key_to_central": bool(config.get("deliver_key_to_central", False)),
+            },
+        )
+        db.add(job)
+        await db.flush()
+        await db.refresh(job)
+        message = "Certificate issuance queued. The agent will pick this up on its next poll cycle."
 
     return {
         "data": {
             "scan_job_id": str(job.id),
             "authority_id": authority_id,
             "status": "pending",
-            "message": "Certificate issuance dispatched. Monitor at GET /scans/{id}.",
+            "message": message,
         }
     }
 
@@ -366,12 +404,13 @@ async def renew_acme_certificate(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Trigger ACME certificate renewal for an existing certificate.
+    """Trigger certificate renewal for an ACME or AD CS authority.
 
-    Renews using the domain set the certificate was actually issued for
-    (not the authority's config.domains, which only scopes discovery).
+    Renews using what the certificate was actually issued with (domain
+    set / template), not the authority's current config defaults — a
+    single CA can plausibly issue certs under more than one template.
     """
-    from certmanager.core.models import ScanJob
+    from certmanager.core.models import Certificate, ScanJob
 
     result = await db.execute(
         select(CertificateAuthority).where(CertificateAuthority.id == authority_id)
@@ -379,28 +418,128 @@ async def renew_acme_certificate(
     authority = result.scalar_one_or_none()
     if not authority:
         raise NotFoundError(f"Authority {authority_id} not found")
-    if authority.ca_type != "acme":
-        raise ValidationError(f"Authority {authority_id} is not an ACME authority")
+    if authority.ca_type not in ("acme", "adcs"):
+        raise ValidationError(f"Authority {authority_id} does not support renewal")
 
-    job = ScanJob(
-        job_type="acme_renew",
-        status="pending",
-        triggered_by="manual",
-        triggered_by_user=current_user.id,
-        scope_config={"authority_id": authority_id, "certificate_id": body.certificate_id},
-    )
-    db.add(job)
-    await db.flush()
-    await db.refresh(job)
+    if authority.ca_type == "acme":
+        job = ScanJob(
+            job_type="acme_renew",
+            status="pending",
+            triggered_by="manual",
+            triggered_by_user=current_user.id,
+            scope_config={"authority_id": authority_id, "certificate_id": body.certificate_id},
+        )
+        db.add(job)
+        await db.flush()
+        await db.refresh(job)
+        _dispatch_acme_job(str(job.id))
+        message = "Certificate renewal dispatched. Monitor at GET /scans/{id}."
+    else:
+        config = authority.config or {}
+        agent_id = config.get("agent_id")
+        if not agent_id:
+            raise ValidationError(f"Authority {authority_id} has no agent_id configured")
 
-    _dispatch_acme_job(str(job.id))
+        cert_result = await db.execute(
+            select(Certificate).where(Certificate.id == body.certificate_id)
+        )
+        certificate = cert_result.scalar_one_or_none()
+        if not certificate:
+            raise NotFoundError(f"Certificate {body.certificate_id} not found")
+
+        cert_detail = certificate.source_detail or {}
+        job = ScanJob(
+            job_type="adcs_renew",
+            status="pending",
+            triggered_by="manual",
+            triggered_by_user=current_user.id,
+            scope_config={
+                "agent_id": agent_id,
+                "authority_id": authority_id,
+                "certificate_id": body.certificate_id,
+                "common_name": certificate.common_name,
+                "sans": certificate.sans or [],
+                "template": cert_detail.get("template") or config.get("template", ""),
+                "deployment_target": config.get("deployment_target", "store"),
+                "deployment_path": config.get("deployment_path", ""),
+                "post_install_hook": config.get("post_install_hook", ""),
+                "deliver_key_to_central": bool(config.get("deliver_key_to_central", False)),
+            },
+        )
+        db.add(job)
+        await db.flush()
+        await db.refresh(job)
+        message = "Certificate renewal queued. The agent will pick this up on its next poll cycle."
 
     return {
         "data": {
             "scan_job_id": str(job.id),
             "authority_id": authority_id,
             "status": "pending",
-            "message": "Certificate renewal dispatched. Monitor at GET /scans/{id}.",
+            "message": message,
+        }
+    }
+
+
+@router.post("/{authority_id}/revoke", status_code=201)
+async def revoke_certificate(
+    authority_id: str,
+    body: RevokeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Revoke a certificate at its issuing CA. AD CS only for now — the
+    ACME connector doesn't implement revocation yet."""
+    from certmanager.core.models import Certificate, ScanJob
+
+    result = await db.execute(
+        select(CertificateAuthority).where(CertificateAuthority.id == authority_id)
+    )
+    authority = result.scalar_one_or_none()
+    if not authority:
+        raise NotFoundError(f"Authority {authority_id} not found")
+    if authority.ca_type not in ("acme", "adcs"):
+        raise ValidationError(f"Authority {authority_id} does not support revocation")
+    if authority.ca_type == "acme":
+        raise ValidationError("ACME revocation is not yet supported")
+
+    cert_result = await db.execute(select(Certificate).where(Certificate.id == body.certificate_id))
+    certificate = cert_result.scalar_one_or_none()
+    if not certificate:
+        raise NotFoundError(f"Certificate {body.certificate_id} not found")
+    if not certificate.serial_number:
+        raise ValidationError(f"Certificate {body.certificate_id} has no serial number on record")
+
+    config = authority.config or {}
+    agent_id = config.get("agent_id")
+    if not agent_id:
+        raise ValidationError(f"Authority {authority_id} has no agent_id configured")
+
+    job = ScanJob(
+        job_type="adcs_revoke",
+        status="pending",
+        triggered_by="manual",
+        triggered_by_user=current_user.id,
+        scope_config={
+            "agent_id": agent_id,
+            "authority_id": authority_id,
+            "certificate_id": body.certificate_id,
+            "serial_number": certificate.serial_number,
+            "ca_server": config.get("ca_server", ""),
+            "ca_name": config.get("ca_name", ""),
+            "reason_code": body.reason_code,
+        },
+    )
+    db.add(job)
+    await db.flush()
+    await db.refresh(job)
+
+    return {
+        "data": {
+            "scan_job_id": str(job.id),
+            "authority_id": authority_id,
+            "status": "pending",
+            "message": "Certificate revocation queued. The agent will pick this up on its next poll cycle.",
         }
     }
 
