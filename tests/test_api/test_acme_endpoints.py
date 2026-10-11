@@ -143,6 +143,62 @@ class TestIssueAndRenewDispatch:
         assert job.scope_config["certificate_id"] == cert.id
 
 
+class TestKeyBundleLookup:
+    """GET /certificates/{id}/key-bundle — tells the Certificate Detail
+    page whether to show a Download button, without exposing the key."""
+
+    async def test_finds_existing_bundle(
+        self, client: AsyncClient, admin_headers: dict, seeded_db: AsyncSession
+    ):
+        authority = await _make_acme_authority(seeded_db)
+        cert, bundle = await _make_cert_and_bundle(seeded_db, authority.id, timedelta(hours=48))
+
+        resp = await client.get(f"/api/v1/certificates/{cert.id}/key-bundle", headers=admin_headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()["data"]
+        assert body["key_bundle_id"] == bundle.id
+        assert body["download_url"] == f"/api/v1/authorities/key-bundles/{bundle.id}/download"
+        assert "private_key_pem" not in body
+
+    async def test_no_bundle_returns_404(
+        self, client: AsyncClient, admin_headers: dict, seeded_db: AsyncSession
+    ):
+        cert = Certificate(
+            common_name="no-bundle.example.com",
+            not_before=datetime.now(UTC),
+            not_after=datetime.now(UTC) + timedelta(days=90),
+            validity_days=90,
+            source_type="aws_acm",
+        )
+        seeded_db.add(cert)
+        await seeded_db.commit()
+
+        resp = await client.get(f"/api/v1/certificates/{cert.id}/key-bundle", headers=admin_headers)
+        assert resp.status_code == 404
+
+    async def test_expired_bundle_returns_404(
+        self, client: AsyncClient, admin_headers: dict, seeded_db: AsyncSession
+    ):
+        authority = await _make_acme_authority(seeded_db)
+        cert, _bundle = await _make_cert_and_bundle(seeded_db, authority.id, timedelta(hours=-1))
+
+        resp = await client.get(f"/api/v1/certificates/{cert.id}/key-bundle", headers=admin_headers)
+        assert resp.status_code == 404
+
+    async def test_viewer_can_see_bundle_exists(
+        self, client: AsyncClient, seeded_db: AsyncSession
+    ):
+        # The lookup itself isn't sensitive — only the actual download is
+        # gated by certificates:download_key. A viewer can see a bundle
+        # exists (and would then get 403 if they tried to download it).
+        authority = await _make_acme_authority(seeded_db)
+        cert, _bundle = await _make_cert_and_bundle(seeded_db, authority.id, timedelta(hours=48))
+        viewer_headers = await _viewer_headers(client, seeded_db)
+
+        resp = await client.get(f"/api/v1/certificates/{cert.id}/key-bundle", headers=viewer_headers)
+        assert resp.status_code == 200
+
+
 class TestKeyBundleDownload:
     async def test_admin_can_download(
         self, client: AsyncClient, admin_headers: dict, seeded_db: AsyncSession

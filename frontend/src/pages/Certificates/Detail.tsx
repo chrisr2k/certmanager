@@ -1,9 +1,10 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Descriptions, Tag, Button, Space, Typography, Spin, Timeline, Collapse } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
-import apiClient from '../../api/client';
+import { Card, Descriptions, Tag, Button, Space, Typography, Spin, Timeline, Collapse, message } from 'antd';
+import { ArrowLeftOutlined, DownloadOutlined } from '@ant-design/icons';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import apiClient, { getEnveloped } from '../../api/client';
+import { saveTextFile } from '../../utils/download';
 
 const { Title } = Typography;
 
@@ -18,6 +19,32 @@ export default function CertificateDetail() {
       return data;
     },
     enabled: !!id,
+  });
+
+  // Only ACME-issued certs ever have a key bundle; a 404 here just means
+  // "none exists / already expired" — not an error worth surfacing.
+  const { data: keyBundle } = useQuery({
+    queryKey: ['certificate-key-bundle', id],
+    queryFn: () => getEnveloped(`/certificates/${id}/key-bundle`),
+    enabled: !!id && cert?.source_type === 'acme',
+    retry: false,
+    throwOnError: false,
+  });
+
+  const downloadMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await apiClient.get(
+        keyBundle.download_url.replace(/^\/api\/v1/, '')
+      );
+      return data.data as { private_key_pem: string; fullchain_pem: string };
+    },
+    onSuccess: (bundle) => {
+      const prefix = `certmanager-${(id || '').slice(0, 8)}`;
+      saveTextFile(`${prefix}.key.pem`, bundle.private_key_pem);
+      saveTextFile(`${prefix}.fullchain.pem`, bundle.fullchain_pem);
+      message.success('Private key and fullchain downloaded');
+    },
+    onError: () => message.error('Download failed — the key bundle may have expired'),
   });
 
   if (isLoading) {
@@ -57,6 +84,16 @@ export default function CertificateDetail() {
         <Tag color={daysLeft < 0 ? 'red' : daysLeft <= 30 ? 'orange' : 'green'}>
           {daysLeft < 0 ? `Expired ${Math.abs(daysLeft)}d ago` : `${daysLeft}d remaining`}
         </Tag>
+        {keyBundle && (
+          <Button
+            type="primary"
+            icon={<DownloadOutlined />}
+            loading={downloadMutation.isPending}
+            onClick={() => downloadMutation.mutate()}
+          >
+            Download Key
+          </Button>
+        )}
       </Space>
 
       <Card title="Certificate Details" style={{ marginBottom: 16 }}>

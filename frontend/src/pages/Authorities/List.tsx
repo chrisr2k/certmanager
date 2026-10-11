@@ -4,22 +4,9 @@ import { PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SyncOutlined, 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiClient, { getEnveloped } from '../../api/client';
 import AddAuthorityModal from '../../components/AddAuthorityModal';
+import { saveTextFile } from '../../utils/download';
 
 const { Title, Text } = Typography;
-
-// Triggers a browser save-as for a string, without ever putting the
-// content in a navigable URL (which would carry no auth header).
-function saveTextFile(filename: string, content: string) {
-  const blob = new Blob([content], { type: 'application/x-pem-file' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
 
 // Polls a scan job until it reaches a terminal state, surfacing a
 // "Download Key" action once an ACME job's key bundle is ready.

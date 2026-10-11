@@ -198,6 +198,47 @@ async def get_certificate(
     return CertificateResponse.model_validate(cert)
 
 
+@router.get("/{cert_id}/key-bundle")
+async def get_certificate_key_bundle(
+    cert_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Check whether a not-yet-expired private key bundle exists for this
+    certificate (e.g. issued via the ACME connector), so the Certificate
+    Detail page knows whether to show a Download button.
+
+    Returns only an ID/expiry/URL — never the key itself. The actual
+    download endpoint (GET /authorities/key-bundles/{id}/download) has
+    its own, separate certificates:download_key permission check.
+    """
+    from datetime import UTC, datetime
+
+    from certmanager.core.models import CertificateKeyBundle
+
+    result = await db.execute(
+        select(CertificateKeyBundle)
+        .where(CertificateKeyBundle.certificate_id == cert_id)
+        .order_by(CertificateKeyBundle.created_at.desc())
+    )
+    bundle = result.scalars().first()
+
+    if bundle is None:
+        raise NotFoundError("No key bundle exists for this certificate")
+
+    expires_at = bundle.expires_at if bundle.expires_at.tzinfo else bundle.expires_at.replace(tzinfo=UTC)
+    if expires_at < datetime.now(UTC):
+        raise NotFoundError("This certificate's key bundle has expired")
+
+    return {
+        "data": {
+            "key_bundle_id": bundle.id,
+            "download_url": f"/api/v1/authorities/key-bundles/{bundle.id}/download",
+            "expires_at": bundle.expires_at.isoformat(),
+        }
+    }
+
+
 @router.post("", response_model=CertificateResponse, status_code=201)
 async def create_certificate(
     data: CertificateCreate,
