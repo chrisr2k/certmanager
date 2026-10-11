@@ -285,7 +285,11 @@ class ACMEConnector(CAConnector):
                 domain = authzr.body.identifier.value
                 await self._answer_dns01(acme_client, account_key, authzr, domain, created_records)
 
-            deadline = datetime.now(UTC) + timedelta(seconds=_AUTHORIZATION_TIMEOUT_SECONDS)
+            # acme's own poll_and_finalize default (datetime.now() + delta)
+            # is a NAIVE datetime — its internal comparisons mix that with
+            # whatever deadline we pass, so an aware one here raises
+            # "can't compare offset-naive and offset-aware datetimes".
+            deadline = datetime.now() + timedelta(seconds=_AUTHORIZATION_TIMEOUT_SECONDS)
             finalized = await asyncio.to_thread(
                 acme_client.poll_and_finalize, order, deadline
             )

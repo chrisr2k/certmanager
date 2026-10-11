@@ -249,6 +249,13 @@ class TestIssueCertificateHappyPath:
 
         fake_acme_client.answer_challenge.assert_called_once()
 
+        # Regression: the deadline passed to poll_and_finalize must be
+        # naive — acme's own internal default (datetime.now(), no tz)
+        # raises "can't compare offset-naive and offset-aware datetimes"
+        # if we hand it a tz-aware one instead.
+        _order_arg, deadline_arg = fake_acme_client.poll_and_finalize.call_args[0]
+        assert deadline_arg.tzinfo is None
+
     async def test_issue_certificate_cleans_up_txt_on_failure(self, monkeypatch):
         dns_provider = _FakeDNSProvider()
         connector = _make_connector(dns_provider=dns_provider)
